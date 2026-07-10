@@ -7,5 +7,6 @@ let package = Package(
     targets: [
         .target(name: "UDIDRegisterKit"),
         .testTarget(name: "UDIDRegisterKitTests", dependencies: ["UDIDRegisterKit"]),
+        .executableTarget(name: "UDIDRegisterApp", dependencies: ["UDIDRegisterKit"]),
     ]
 )
