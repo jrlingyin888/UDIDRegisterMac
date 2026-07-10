@@ -21,13 +21,20 @@ public final class AccountStore {
         try JSONEncoder().encode(accounts).write(to: fileURL, options: .atomic)
     }
     @discardableResult public func add(_ a: AppleAccount) throws -> AppleAccount {
-        accounts.append(a); try persist(); return a
+        let previous = accounts
+        accounts.append(a)
+        do { try persist() } catch { accounts = previous; throw error }
+        return a
     }
     public func update(_ a: AppleAccount) throws {
         guard let i = accounts.firstIndex(where: { $0.id == a.id }) else { return }
-        accounts[i] = a; try persist()
+        let previous = accounts
+        accounts[i] = a
+        do { try persist() } catch { accounts = previous; throw error }
     }
     public func remove(id: UUID) throws {
-        accounts.removeAll { $0.id == id }; try persist()
+        let previous = accounts
+        accounts.removeAll { $0.id == id }
+        do { try persist() } catch { accounts = previous; throw error }
     }
 }

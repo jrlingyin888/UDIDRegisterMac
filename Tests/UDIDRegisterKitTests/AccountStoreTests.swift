@@ -24,4 +24,11 @@ final class AccountStoreTests: XCTestCase {
         try s.remove(id: a.id)
         XCTAssertTrue(s.accounts.isEmpty)
     }
+    func testAddRollsBackInMemoryWhenPersistFails() {
+        // parent dir does not exist and is not created by AccountStore → atomic write throws
+        let bad = URL(fileURLWithPath: "/nonexistent-\(UUID())/deeper/accounts.json")
+        let s = AccountStore(fileURL: bad)
+        XCTAssertThrowsError(try s.add(AppleAccount(displayName: "x", keyID: "K", issuerID: "I")))
+        XCTAssertTrue(s.accounts.isEmpty)   // rolled back, not left with a phantom entry
+    }
 }

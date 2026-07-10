@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cd "$(dirname "$0")/.."
 # 需要环境变量：DEV_ID_APP="Developer ID Application: NAME (TEAMID)"，NOTARY_PROFILE=公证 keychain profile 名
 APP="UDIDRegisterMac.app"
 BIN="UDIDRegisterApp"
@@ -31,5 +32,6 @@ codesign --force --options runtime --timestamp \
 hdiutil create -volname "UDID 注册助手" -srcfolder "$DIST/$APP" -ov -format UDZO "$DIST/UDIDRegisterMac.dmg"
 
 xcrun notarytool submit "$DIST/UDIDRegisterMac.dmg" --keychain-profile "$NOTARY_PROFILE" --wait
+xcrun stapler staple "$DIST/$APP"
 xcrun stapler staple "$DIST/UDIDRegisterMac.dmg"
 echo "✅ 完成：$DIST/UDIDRegisterMac.dmg"

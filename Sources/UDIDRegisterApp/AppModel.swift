@@ -135,9 +135,9 @@ extension AppModel {
         guard let a = selected else { quotaText = ""; return }
         do {
             let rows = try await client.listDevices(credentials: try credentials(for: a))
-            quotaText = "已用 \(rows.count) / 100 台"
+            if selectedID == a.id { quotaText = "已用 \(rows.count) / 100 台" }
         } catch {
-            quotaText = "额度获取失败"
+            if selectedID == a.id { quotaText = "额度获取失败" }
         }
     }
 }
