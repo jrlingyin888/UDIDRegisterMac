@@ -47,3 +47,37 @@ final class AppModel {
         return ASCCredentials(keyID: a.keyID, issuerID: a.issuerID, privateKeyPEM: pem)
     }
 }
+
+extension AppModel {
+    /// 校验凭据（签 JWT + 拉一页设备），成功则存账号 + 存 .p8 到 Keychain。
+    func addAccount(displayName: String, keyID: String, issuerID: String,
+                    teamID: String?, p8PEM: String) async -> Bool {
+        let account = AppleAccount(displayName: displayName, keyID: keyID, issuerID: issuerID, teamID: teamID)
+        let cred = ASCCredentials(keyID: keyID, issuerID: issuerID, privateKeyPEM: p8PEM)
+        do {
+            _ = try await client.listDevices(credentials: cred)   // 凭据有效性校验
+            try secrets.save(p8PEM, for: account.id)
+            try store.add(account)
+            reload()
+            selectedID = account.id
+            banner = nil
+            return true
+        } catch {
+            banner = "凭据校验失败：\(error.localizedDescription)"
+            return false
+        }
+    }
+    func deleteAccount(id: UUID) {
+        try? secrets.delete(for: id)
+        try? store.remove(id: id)
+        reload()
+    }
+    /// 返回设备数（额度已用）或错误
+    func testConnection(for a: AppleAccount) async -> Result<Int, Error> {
+        do {
+            let cred = try credentials(for: a)
+            let rows = try await client.listDevices(credentials: cred)
+            return .success(rows.count)
+        } catch { return .failure(error) }
+    }
+}
