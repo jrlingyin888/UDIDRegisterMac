@@ -54,18 +54,26 @@ extension AppModel {
                     teamID: String?, p8PEM: String) async -> Bool {
         let account = AppleAccount(displayName: displayName, keyID: keyID, issuerID: issuerID, teamID: teamID)
         let cred = ASCCredentials(keyID: keyID, issuerID: issuerID, privateKeyPEM: p8PEM)
+        // 1) 校验凭据
         do {
-            _ = try await client.listDevices(credentials: cred)   // 凭据有效性校验
-            try secrets.save(p8PEM, for: account.id)
-            try store.add(account)
-            reload()
-            selectedID = account.id
-            banner = nil
-            return true
+            _ = try await client.listDevices(credentials: cred)
         } catch {
             banner = "凭据校验失败：\(error.localizedDescription)"
             return false
         }
+        // 2) 持久化：Keychain 写成功但账号写失败时，回滚 Keychain，避免孤儿密钥
+        do {
+            try secrets.save(p8PEM, for: account.id)
+            try store.add(account)
+        } catch {
+            try? secrets.delete(for: account.id)
+            banner = "保存失败：\(error.localizedDescription)"
+            return false
+        }
+        reload()
+        selectedID = account.id
+        banner = nil
+        return true
     }
     func deleteAccount(id: UUID) {
         try? secrets.delete(for: id)
