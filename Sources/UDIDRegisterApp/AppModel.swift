@@ -115,5 +115,29 @@ extension AppModel {
             }
         }
         registering = false
+        await refreshQuota()
+    }
+}
+
+extension AppModel {
+    private static let selKey = "selectedAccountID"
+
+    func restoreSelection() {
+        if let s = UserDefaults.standard.string(forKey: Self.selKey), let id = UUID(uuidString: s),
+           accounts.contains(where: { $0.id == id }) {
+            selectedID = id
+        }
+    }
+    func persistSelection() {
+        UserDefaults.standard.set(selectedID?.uuidString, forKey: Self.selKey)
+    }
+    func refreshQuota() async {
+        guard let a = selected else { quotaText = ""; return }
+        do {
+            let rows = try await client.listDevices(credentials: try credentials(for: a))
+            quotaText = "已用 \(rows.count) / 100 台"
+        } catch {
+            quotaText = "额度获取失败"
+        }
     }
 }

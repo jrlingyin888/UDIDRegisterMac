@@ -16,6 +16,9 @@ struct RootView: View {
                 .labelsHidden().frame(maxWidth: 220)
                 Button("管理账号…") { showAccounts = true }
                 Spacer()
+                if !model.quotaText.isEmpty {
+                    Text(model.quotaText).font(.caption).foregroundStyle(.secondary)
+                }
             }
             if model.selected == nil {
                 Text("请先添加一个苹果账号").foregroundStyle(.secondary)
@@ -28,5 +31,10 @@ struct RootView: View {
         .padding()
         .frame(minWidth: 640, minHeight: 520)
         .sheet(isPresented: $showAccounts) { AccountManagerView().environment(model) }
+        .task { model.restoreSelection(); await model.refreshQuota() }
+        .onChange(of: model.selectedID) { _, _ in
+            model.persistSelection()
+            Task { await model.refreshQuota() }
+        }
     }
 }
