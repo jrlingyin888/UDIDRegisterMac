@@ -20,6 +20,10 @@ struct RootView: View {
             if model.selected == nil {
                 Text("请先添加一个苹果账号").foregroundStyle(.secondary)
             }
+            if model.selected != nil {
+                Divider()
+                RegisterView().environment(model)
+            }
         }
         .padding()
         .frame(minWidth: 640, minHeight: 520)

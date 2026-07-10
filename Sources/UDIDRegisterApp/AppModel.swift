@@ -89,3 +89,31 @@ extension AppModel {
         } catch { return .failure(error) }
     }
 }
+
+extension AppModel {
+    func register(text: String) async {
+        guard let a = selected else { banner = "请先选择账号"; return }
+        let cred: ASCCredentials
+        do { cred = try credentials(for: a) }
+        catch { banner = error.localizedDescription; return }
+
+        registering = true
+        results = []
+        banner = nil
+        for input in DeviceInputParser.parse(text) {
+            guard let udid = UDIDNormalizer.normalize(input.udidRaw) else {
+                results.append(RowResult(name: input.name, udid: input.udidRaw,
+                                         outcome: .failed(message: "UDID 格式不正确")))
+                continue
+            }
+            do {
+                let outcome = try await client.registerDevice(credentials: cred, name: input.name, udid: udid)
+                results.append(RowResult(name: input.name, udid: udid, outcome: outcome))
+            } catch {
+                results.append(RowResult(name: input.name, udid: udid,
+                                         outcome: .failed(message: error.localizedDescription)))
+            }
+        }
+        registering = false
+    }
+}
