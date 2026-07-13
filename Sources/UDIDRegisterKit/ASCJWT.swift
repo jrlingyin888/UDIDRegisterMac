@@ -1,7 +1,12 @@
 import Foundation
 import CryptoKit
 
-public enum ASCJWTError: Error { case invalidPrivateKey }
+public enum ASCJWTError: Error, LocalizedError {
+    case invalidPrivateKey
+    public var errorDescription: String? {
+        "这个 .p8 文件无法识别，请确认是从 App Store Connect 下载的原始 .p8 文件"
+    }
+}
 
 public enum ASCJWT {
     public static func sign(keyID: String, issuerID: String,
