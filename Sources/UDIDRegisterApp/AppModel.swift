@@ -58,7 +58,7 @@ extension AppModel {
         do {
             _ = try await client.listDevices(credentials: cred)
         } catch {
-            banner = "凭据校验失败：\(error.localizedDescription)"
+            banner = "凭据校验失败：\(UserFacingMessage.from(error))"
             return false
         }
         // 2) 持久化：Keychain 写成功但账号写失败时，回滚 Keychain，避免孤儿密钥
@@ -67,7 +67,7 @@ extension AppModel {
             try store.add(account)
         } catch {
             try? secrets.delete(for: account.id)
-            banner = "保存失败：\(error.localizedDescription)"
+            banner = "保存失败：\(UserFacingMessage.from(error))"
             return false
         }
         reload()
@@ -95,7 +95,7 @@ extension AppModel {
         guard let a = selected else { banner = "请先选择账号"; return }
         let cred: ASCCredentials
         do { cred = try credentials(for: a) }
-        catch { banner = error.localizedDescription; return }
+        catch { banner = UserFacingMessage.from(error); return }
 
         registering = true
         results = []
@@ -111,7 +111,7 @@ extension AppModel {
                 results.append(RowResult(name: input.name, udid: udid, outcome: outcome))
             } catch {
                 results.append(RowResult(name: input.name, udid: udid,
-                                         outcome: .failed(message: error.localizedDescription)))
+                                         outcome: .failed(message: UserFacingMessage.from(error))))
             }
         }
         registering = false
@@ -139,5 +139,32 @@ extension AppModel {
         } catch {
             if selectedID == a.id { quotaText = "额度获取失败" }
         }
+    }
+}
+
+extension AppModel {
+    /// 读账号元数据 + 从 Keychain 取 .p8，打包成一键配置文件数据。
+    func exportConfig(for a: AppleAccount) throws -> Data {
+        guard let pem = try secrets.load(for: a.id) else {
+            throw AppError.msg("找不到该账号的 .p8，无法导出，请重新添加账号")
+        }
+        let config = AccountConfig(schemaVersion: AccountConfigCodec.currentVersion,
+                                   displayName: a.displayName, keyID: a.keyID,
+                                   issuerID: a.issuerID, teamID: a.teamID, p8PEM: pem)
+        return try AccountConfigCodec.encode(config)
+    }
+
+    /// 从一键配置文件导入：解析 → 复用 addAccount（含联网校验 + Keychain 写入 + 回滚）。
+    func importConfig(from url: URL) async -> Bool {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        let data: Data
+        do { data = try Data(contentsOf: url) }
+        catch { banner = "读取配置文件失败：\(UserFacingMessage.from(error))"; return false }
+        let config: AccountConfig
+        do { config = try AccountConfigCodec.decode(data) }
+        catch { banner = UserFacingMessage.from(error); return false }
+        return await addAccount(displayName: config.displayName, keyID: config.keyID,
+                                issuerID: config.issuerID, teamID: config.teamID, p8PEM: config.p8PEM)
     }
 }
