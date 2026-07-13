@@ -316,8 +316,11 @@ public enum UserFacingMessage {
                 return detail.isEmpty ? "请求失败（ASC API \(status)）" : "请求失败：\(detail)"
             }
             return ascError.localizedDescription
-        case ASCJWTError.invalidPrivateKey:
-            return "这个 .p8 文件无法识别，请确认是从 App Store Connect 下载的原始 .p8 文件"
+        case let jwtError as ASCJWTError:
+            switch jwtError {
+            case .invalidPrivateKey:
+                return "这个 .p8 文件无法识别，请确认是从 App Store Connect 下载的原始 .p8 文件"
+            }
         case is URLError:
             return "网络连接失败，请检查网络后重试"
         case let keychainError as KeychainError:
