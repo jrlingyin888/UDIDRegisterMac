@@ -19,7 +19,7 @@ public enum KeychainError: Error { case os(OSStatus) }
 
 public final class KeychainSecretStore: SecretStore {
     let service: String
-    public init(service: String = "com.yourco.UDIDRegisterMac") { self.service = service }
+    public init(service: String = AppIdentifiers.bundleID) { self.service = service }
 
     public func save(_ pem: String, for id: UUID) throws {
         try delete(for: id)
