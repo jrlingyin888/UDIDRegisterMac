@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 import UDIDRegisterKit
 
@@ -13,7 +14,14 @@ struct AccountManagerView: View {
     @State private var p8PEM = ""
     @State private var p8Filename = ""
     @State private var busy = false
-    @State private var importing = false
+    @State private var importing = false          // 选 .p8
+    @State private var configImporting = false    // 选 .udidconfig
+    @State private var pendingDeleteID: UUID?
+    @State private var showDeleteConfirm = false
+
+    private var configTypes: [UTType] {
+        [UTType(filenameExtension: "udidconfig") ?? .json, .json]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -29,16 +37,28 @@ struct AccountManagerView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button(role: .destructive) { model.deleteAccount(id: a.id) } label: {
-                                Image(systemName: "trash")
-                            }.buttonStyle(.borderless)
+                            Button("导出配置…") { exportAccount(a) }
+                                .buttonStyle(.borderless)
+                            Button(role: .destructive) {
+                                pendingDeleteID = a.id; showDeleteConfirm = true
+                            } label: { Image(systemName: "trash") }
+                            .buttonStyle(.borderless)
                         }
                     }
                 }.frame(height: 140)
             }
 
             Divider()
-            Text("添加账号").font(.subheadline).bold()
+            HStack {
+                Button("导入配置文件…") { configImporting = true }
+                Text("同事一键配置：选择管理员给的 .udidconfig")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("配置文件含私钥，请通过安全渠道传递，用完可删除。")
+                .font(.caption2).foregroundStyle(.secondary)
+
+            Divider()
+            Text("手动添加账号").font(.subheadline).bold()
             TextField("显示名（如 jgz / 公司A）", text: $displayName)
             TextField("Key ID（如 QA2MC7L8X7）", text: $keyID)
             TextField("Issuer ID（UUID）", text: $issuerID)
@@ -79,6 +99,32 @@ struct AccountManagerView: View {
                     p8PEM = text; p8Filename = url.lastPathComponent
                 }
             }
+        }
+        .fileImporter(isPresented: $configImporting, allowedContentTypes: configTypes) { result in
+            if case let .success(url) = result {
+                Task { busy = true; _ = await model.importConfig(from: url); busy = false }
+            }
+        }
+        .alert("确定删除该账号？", isPresented: $showDeleteConfirm, presenting: pendingDeleteID) { id in
+            Button("删除", role: .destructive) { model.deleteAccount(id: id) }
+            Button("取消", role: .cancel) {}
+        } message: { _ in
+            Text("此操作会移除本机保存的凭据，无法撤销。")
+        }
+    }
+
+    private func exportAccount(_ a: AppleAccount) {
+        let data: Data
+        do { data = try model.exportConfig(for: a) }
+        catch { model.banner = UserFacingMessage.from(error); return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(a.displayName).udidconfig"
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+            do { try data.write(to: url); model.banner = nil }
+            catch { model.banner = "导出失败：\(UserFacingMessage.from(error))" }
         }
     }
 }
