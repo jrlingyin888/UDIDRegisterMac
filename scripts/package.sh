@@ -6,24 +6,22 @@ APP="UDIDRegisterMac.app"
 BIN="UDIDRegisterApp"
 DIST="dist"
 
+# bundle-id 单一来源：从 AppIdentifiers.swift 抽取，保证与 Keychain service 一致
+BUNDLE_ID=$(grep -Eo 'bundleID[[:space:]]*=[[:space:]]*"[^"]+"' Sources/UDIDRegisterKit/AppIdentifiers.swift | sed -E 's/.*"([^"]+)".*/\1/')
+[ -n "$BUNDLE_ID" ] || { echo "❌ 无法从 AppIdentifiers.swift 解析 bundleID"; exit 1; }
+echo "Bundle ID: $BUNDLE_ID"
+
+[ -f Resources/AppIcon.icns ] || { echo "❌ 缺少 Resources/AppIcon.icns，请先运行 swift scripts/make-icon.swift"; exit 1; }
+
 swift build -c release --product "$BIN"
 
 rm -rf "$DIST/$APP"; mkdir -p "$DIST/$APP/Contents/MacOS" "$DIST/$APP/Contents/Resources"
 cp ".build/release/$BIN" "$DIST/$APP/Contents/MacOS/$BIN"
+cp Resources/AppIcon.icns "$DIST/$APP/Contents/Resources/AppIcon.icns"
 
-cat > "$DIST/$APP/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleName</key><string>UDID 注册助手</string>
-<key>CFBundleIdentifier</key><string>com.yourco.UDIDRegisterMac</string>
-<key>CFBundleExecutable</key><string>$BIN</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0.0</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string>
-</dict></plist>
-PLIST
+cp Resources/Info.plist "$DIST/$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$DIST/$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $BIN" "$DIST/$APP/Contents/Info.plist"
 
 codesign --force --options runtime --timestamp \
   --entitlements Resources/UDIDRegisterMac.entitlements \
