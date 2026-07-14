@@ -32,8 +32,15 @@ struct DeviceListView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(model.devices) { d in
                             HStack {
-                                Text(d.name.isEmpty ? "（无名称）" : d.name)
-                                    .lineLimit(1).truncationMode(.middle)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(d.name.isEmpty ? "（无名称）" : d.name)
+                                        .lineLimit(1).truncationMode(.middle)
+                                    Text(d.udid)
+                                        .font(.caption).monospaced()
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                        .textSelection(.enabled)
+                                }
                                 Spacer(minLength: 12)
                                 Text(statusBadge(d.status))
                                     .font(.callout).foregroundStyle(.secondary).fixedSize()
@@ -47,6 +54,6 @@ struct DeviceListView: View {
             }
         }
         .padding(12)
-        .frame(width: 320)
+        .frame(width: 360)
     }
 }
