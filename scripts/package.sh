@@ -27,9 +27,49 @@ codesign --force --options runtime --timestamp \
   --entitlements Resources/UDIDRegisterMac.entitlements \
   --sign "$DEV_ID_APP" "$DIST/$APP"
 
-hdiutil create -volname "UDID 注册助手" -srcfolder "$DIST/$APP" -ov -format UDZO "$DIST/UDIDRegisterMac.dmg"
+# ---- 生成带「拖入 应用程序」布局的 DMG ----
+VOL="UDID 注册助手"
+STAGE="$DIST/dmg-stage"
+RW="$DIST/rw.dmg"
+FINAL="$DIST/UDIDRegisterMac.dmg"
 
-xcrun notarytool submit "$DIST/UDIDRegisterMac.dmg" --keychain-profile "$NOTARY_PROFILE" --wait
-xcrun stapler staple "$DIST/$APP"
-xcrun stapler staple "$DIST/UDIDRegisterMac.dmg"
-echo "✅ 完成：$DIST/UDIDRegisterMac.dmg"
+hdiutil detach "/Volumes/$VOL" -force >/dev/null 2>&1 || true   # 卸载可能残留的同名卷
+rm -rf "$STAGE" "$RW" "$FINAL"
+mkdir -p "$STAGE"
+cp -R "$DIST/$APP" "$STAGE/$APP"
+ln -s /Applications "$STAGE/Applications"
+
+hdiutil create -volname "$VOL" -srcfolder "$STAGE" -fs HFS+ -format UDRW -ov "$RW" >/dev/null
+DEV=$(hdiutil attach "$RW" -readwrite -noverify -noautoopen | grep -Eo '^/dev/disk[0-9]+' | head -1)
+
+# 摆放图标（app 居左、应用程序居右）。需要「自动化 → 控制 Finder」权限；
+# 首次运行会弹窗，点允许即可。未授权时仅布局不生效，不影响拖拽安装。
+osascript <<OSA || echo "（提示：窗口布局未设置——请在弹窗里允许「控制 Finder」后重跑；DMG 仍可正常拖拽安装）"
+tell application "Finder"
+  tell disk "$VOL"
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set the bounds of container window to {200, 120, 720, 470}
+    set vopts to the icon view options of container window
+    set arrangement of vopts to not arranged
+    set icon size of vopts to 96
+    set position of item "$APP" of container window to {150, 175}
+    set position of item "Applications" of container window to {380, 175}
+    update without registering applications
+    delay 1
+    close
+  end tell
+end tell
+OSA
+
+sync
+hdiutil detach "$DEV" >/dev/null 2>&1 || hdiutil detach "$DEV" -force >/dev/null 2>&1 || true
+hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$FINAL" >/dev/null
+rm -f "$RW"; rm -rf "$STAGE"
+
+# ---- 公证 + staple ----
+xcrun notarytool submit "$FINAL" --keychain-profile "$NOTARY_PROFILE" --wait
+xcrun stapler staple "$FINAL"
+echo "✅ 完成：$FINAL"
