@@ -14,13 +14,20 @@ struct AccountManagerView: View {
     @State private var p8PEM = ""
     @State private var p8Filename = ""
     @State private var busy = false
-    @State private var importing = false          // 选 .p8
-    @State private var configImporting = false    // 选 .udidconfig
+    // 单一文件选择器 + 目标枚举：避免同一 View 上叠加多个 .fileImporter
+    // （SwiftUI 会让内层的那个失效，导致按钮点了没反应）。
+    @State private var showFilePicker = false
+    @State private var pickerTarget: FilePickerTarget = .p8
     @State private var pendingDeleteID: UUID?
     @State private var showDeleteConfirm = false
 
-    private var configTypes: [UTType] {
-        [UTType(filenameExtension: "udidconfig") ?? .json, .json]
+    private enum FilePickerTarget { case p8, config }
+
+    private var pickerContentTypes: [UTType] {
+        switch pickerTarget {
+        case .p8:     return [UTType(filenameExtension: "p8") ?? .data]
+        case .config: return [UTType(filenameExtension: "udidconfig") ?? .json, .json]
+        }
     }
 
     var body: some View {
@@ -50,7 +57,7 @@ struct AccountManagerView: View {
 
             Divider()
             HStack {
-                Button("导入配置文件…") { configImporting = true }
+                Button("导入配置文件…") { pickerTarget = .config; showFilePicker = true }
                 Text("同事一键配置：选择管理员给的 .udidconfig")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -65,7 +72,7 @@ struct AccountManagerView: View {
             TextField("Team ID（可选，仅展示）", text: $teamID)
 
             HStack {
-                Button("选择 .p8 文件…") { importing = true }
+                Button("选择 .p8 文件…") { pickerTarget = .p8; showFilePicker = true }
                 Text(p8Filename.isEmpty ? "未选择" : p8Filename)
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -91,17 +98,16 @@ struct AccountManagerView: View {
         }
         .padding()
         .frame(width: 460)
-        .fileImporter(isPresented: $importing, allowedContentTypes: [UTType(filenameExtension: "p8") ?? .data]) { result in
-            if case let .success(url) = result {
+        .fileImporter(isPresented: $showFilePicker, allowedContentTypes: pickerContentTypes) { result in
+            guard case let .success(url) = result else { return }
+            switch pickerTarget {
+            case .p8:
                 let didAccess = url.startAccessingSecurityScopedResource()
                 defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
                 if let text = try? String(contentsOf: url, encoding: .utf8) {
                     p8PEM = text; p8Filename = url.lastPathComponent
                 }
-            }
-        }
-        .fileImporter(isPresented: $configImporting, allowedContentTypes: configTypes) { result in
-            if case let .success(url) = result {
+            case .config:
                 Task { busy = true; _ = await model.importConfig(from: url); busy = false }
             }
         }
