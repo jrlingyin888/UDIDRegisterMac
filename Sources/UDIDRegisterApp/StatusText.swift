@@ -9,6 +9,16 @@ func statusText(_ s: DeviceStatus) -> String {
     }
 }
 
+/// 列表行用的精简状态徽章（`statusText` 太长，不适合每行显示）。
+func statusBadge(_ s: DeviceStatus) -> String {
+    switch s {
+    case .enabled:    return "✅ 已可用"
+    case .processing: return "⏳ 处理中"
+    case .disabled:   return "🚫 已禁用"
+    case .unknown:    return "ℹ️ 未知"
+    }
+}
+
 func outcomeText(_ o: RegistrationOutcome) -> String {
     switch o {
     case .created(let s):                 return "✅ 注册成功 · \(statusText(s))"

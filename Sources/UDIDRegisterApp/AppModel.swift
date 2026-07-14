@@ -20,6 +20,7 @@ final class AppModel {
     var accounts: [AppleAccount] = []
     var selectedID: UUID?
     var quotaText: String = ""
+    var devices: [DeviceRow] = []
     var results: [RowResult] = []
     var registering = false
     var banner: String?
@@ -132,12 +133,12 @@ extension AppModel {
         UserDefaults.standard.set(selectedID?.uuidString, forKey: Self.selKey)
     }
     func refreshQuota() async {
-        guard let a = selected else { quotaText = ""; return }
+        guard let a = selected else { quotaText = ""; devices = []; return }
         do {
             let rows = try await client.listDevices(credentials: try credentials(for: a))
-            if selectedID == a.id { quotaText = "已用 \(rows.count) / 100 台" }
+            if selectedID == a.id { quotaText = "已用 \(rows.count) / 100 台"; devices = rows }
         } catch {
-            if selectedID == a.id { quotaText = "额度获取失败" }
+            if selectedID == a.id { quotaText = "额度获取失败"; devices = [] }
         }
     }
 }

@@ -24,7 +24,17 @@ struct RegisterView: View {
 
             if !model.results.isEmpty {
                 Divider()
-                Text("结果").font(.subheadline).bold()
+                HStack {
+                    Text("结果").font(.subheadline).bold()
+                    Spacer()
+                    Button {
+                        model.results = []
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("清除结果")
+                }
                 List(model.results) { r in
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(r.name)  ·  \(r.udid)").font(.caption).foregroundStyle(.secondary)
