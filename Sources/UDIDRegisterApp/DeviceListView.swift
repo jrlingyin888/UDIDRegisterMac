@@ -45,35 +45,38 @@ struct DeviceListView: View {
 
             Divider()
 
-            if model.devices.isEmpty {
-                emptyState("暂无已登记设备")
-            } else if filtered.isEmpty {
-                emptyState("无匹配设备")
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(filtered) { d in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(d.name.isEmpty ? "（无名称）" : d.name)
-                                        .lineLimit(1).truncationMode(.middle)
-                                    Text(d.udid)
-                                        .font(.caption).monospaced()
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1).truncationMode(.middle)
-                                        .textSelection(.enabled)
+            // 固定高度：无论筛选出多少条，弹窗高度恒定，列表在固定区域内滚动。
+            Group {
+                if model.devices.isEmpty {
+                    emptyState("暂无已登记设备")
+                } else if filtered.isEmpty {
+                    emptyState("无匹配设备")
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(filtered) { d in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(d.name.isEmpty ? "（无名称）" : d.name)
+                                            .lineLimit(1).truncationMode(.middle)
+                                        Text(d.udid)
+                                            .font(.caption).monospaced()
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1).truncationMode(.middle)
+                                            .textSelection(.enabled)
+                                    }
+                                    Spacer(minLength: 12)
+                                    Text(statusBadge(d.status))
+                                        .font(.callout).foregroundStyle(.secondary).fixedSize()
                                 }
-                                Spacer(minLength: 12)
-                                Text(statusBadge(d.status))
-                                    .font(.callout).foregroundStyle(.secondary).fixedSize()
+                                .padding(.vertical, 6)
+                                Divider()
                             }
-                            .padding(.vertical, 6)
-                            Divider()
                         }
                     }
                 }
-                .frame(maxHeight: 360)
             }
+            .frame(height: 360)
         }
         .padding(12)
         .frame(width: 360)
@@ -82,7 +85,6 @@ struct DeviceListView: View {
     private func emptyState(_ text: String) -> some View {
         Text(text)
             .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
