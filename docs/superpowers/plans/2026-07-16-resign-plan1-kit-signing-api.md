@@ -670,11 +670,16 @@ git commit -m "feat(kit): ASC certificates endpoints"
 ```swift
 // 追加到 ASCSigningClientTests
     func testRefreshDeletesOldThenCreates() async throws {
-        actor Calls { var log: [String] = []; func add(_ s: String) { log.append(s) } }
-        let calls = Calls()
+        // 同步、加锁的记录器（不要用 detached Task，会与断言竞态）
+        final class Recorder: @unchecked Sendable {
+            private let lock = NSLock(); private var log: [String] = []
+            func add(_ s: String) { lock.lock(); log.append(s); lock.unlock() }
+            var entries: [String] { lock.lock(); defer { lock.unlock() }; return log }
+        }
+        let rec = Recorder()
         let der = Data([0x0A, 0x0B])
         let c = ASCClient(http: MockHTTP { method, path in
-            Task { await calls.add("\(method) \(path)") }
+            rec.add("\(method) \(path)")
             if method == "GET" {  // listProfiles 返回一个旧的同名 profile
                 return MockHTTP.json(200, ["data": [["id": "OLD", "attributes": ["name": "n"]]]])
             }
@@ -687,9 +692,8 @@ git commit -m "feat(kit): ASC certificates endpoints"
             bundleIdResourceId: "B", certificateId: "C", deviceIds: ["D1", "D2"])
         XCTAssertEqual(info.id, "NEW")
         XCTAssertEqual(info.contentData, der)
-        // DELETE 命中旧 profile 路径
-        let log = await calls.log
-        XCTAssertTrue(log.contains { $0.hasPrefix("DELETE") && $0.contains("v1/profiles/OLD") })
+        // DELETE 命中旧 profile 路径（同步记录，无竞态）
+        XCTAssertTrue(rec.entries.contains { $0.hasPrefix("DELETE") && $0.contains("v1/profiles/OLD") })
     }
     func testCreateAdHocProfileParsesContent() async throws {
         let der = Data([0x77])
