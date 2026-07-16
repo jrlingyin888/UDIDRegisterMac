@@ -30,6 +30,30 @@ extension ASCClient {
         return try await createBundleId(credentials: c, identifier: identifier, name: name)
     }
 
+    // MARK: - Certificates
+    public func listCertificates(credentials c: ASCCredentials, type: CertificateType) async throws -> [CertificateInfo] {
+        var comp = URLComponents(url: Self.base.appendingPathComponent("v1/certificates"), resolvingAgainstBaseURL: false)!
+        comp.queryItems = [URLQueryItem(name: "filter[certificateType]", value: type.rawValue),
+                           URLQueryItem(name: "limit", value: "200")]
+        let resp = try await http.send(method: "GET", url: comp.url!, headers: try headers(c), body: nil)
+        try Self.ensureOK(resp)
+        let arr = (Self.jsonObject(resp)?["data"] as? [[String: Any]]) ?? []
+        return arr.compactMap(CertificateInfo.init(json:))
+    }
+
+    public func createCertificate(credentials c: ASCCredentials, csrDER: Data, type: CertificateType) async throws -> CertificateInfo {
+        let payload: [String: Any] = ["data": ["type": "certificates",
+            "attributes": ["certificateType": type.rawValue, "csrContent": Self.pemCSR(csrDER)]]]
+        let resp = try await http.send(method: "POST",
+            url: Self.base.appendingPathComponent("v1/certificates"),
+            headers: try headers(c), body: try JSONSerialization.data(withJSONObject: payload))
+        try Self.ensureOK(resp)
+        guard let d = Self.jsonObject(resp)?["data"] as? [String: Any], let info = CertificateInfo(json: d) else {
+            throw ASCError.http(resp.status, "创建证书返回异常")
+        }
+        return info
+    }
+
     // MARK: - Helpers
     static func ensureOK(_ resp: HTTPResponse) throws {
         guard (200...299).contains(resp.status) else {
