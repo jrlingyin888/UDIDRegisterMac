@@ -20,7 +20,7 @@ public struct ASCClient {
     public static func defaultSign(_ c: ASCCredentials) throws -> String {
         try ASCJWT.sign(keyID: c.keyID, issuerID: c.issuerID, privateKeyPEM: c.privateKeyPEM)
     }
-    private func headers(_ c: ASCCredentials) throws -> [String: String] {
+    func headers(_ c: ASCCredentials) throws -> [String: String] {
         ["Authorization": "Bearer \(try signJWT(c))", "Content-Type": "application/json"]
     }
 
