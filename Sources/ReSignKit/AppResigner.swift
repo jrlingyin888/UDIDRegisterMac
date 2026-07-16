@@ -7,7 +7,7 @@ public struct AppResigner {
         // ① 写描述文件
         try profileData.write(to: bundle.embeddedProfileURL())
         // ② entitlements 落临时 plist
-        let entURL = appDir.deletingLastPathComponent().appendingPathComponent("entitlements-\(UUID().uuidString).plist")
+        let entURL = FileManager.default.temporaryDirectory.appendingPathComponent("entitlements-\(UUID().uuidString).plist")
         let entData = try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0)
         try entData.write(to: entURL)
         defer { try? FileManager.default.removeItem(at: entURL) }
