@@ -7,6 +7,8 @@ let package = Package(
     targets: [
         .target(name: "UDIDRegisterKit"),
         .testTarget(name: "UDIDRegisterKitTests", dependencies: ["UDIDRegisterKit"]),
+        .target(name: "ReSignKit", dependencies: ["UDIDRegisterKit"]),
+        .testTarget(name: "ReSignKitTests", dependencies: ["ReSignKit"]),
         .executableTarget(name: "UDIDRegisterApp", dependencies: ["UDIDRegisterKit"]),
     ]
 )
