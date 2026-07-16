@@ -25,5 +25,12 @@ final class DERTests: XCTestCase {
     }
     func testContextConstructedEmpty() {
         XCTAssertEqual(DER.contextConstructed(0, []), [0xA0, 0x00])
+        XCTAssertEqual(DER.contextConstructed(3, [0x01]), [0xA3, 0x01, 0x01])
+    }
+    func testSetNullAndStrings() {
+        XCTAssertEqual(DER.set([DER.integer([0x00])]), [0x31, 0x03, 0x02, 0x01, 0x00])
+        XCTAssertEqual(DER.null(), [0x05, 0x00])
+        XCTAssertEqual(DER.utf8String("A"), [0x0C, 0x01, 0x41])
+        XCTAssertEqual(DER.printableString("A"), [0x13, 0x01, 0x41])
     }
 }
