@@ -50,7 +50,7 @@ public struct AppBundle {
     public func nestedExecutableBundles() -> [URL] {
         let fm = FileManager.default
         var out: [URL] = []
-        for (sub, ext) in [("PlugIns", "appex"), ("Watch", "app")] {
+        for (sub, ext) in [("PlugIns", "appex"), ("Watch", "app"), ("AppClips", "app")] {
             let dir = appDir.appendingPathComponent(sub)
             if let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
                 out += items.filter { $0.pathExtension == ext }

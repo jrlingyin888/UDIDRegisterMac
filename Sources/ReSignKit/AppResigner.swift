@@ -3,11 +3,11 @@ import Foundation
 public struct AppResigner {
     public static func resign(appDir: URL, identity: TemporaryKeychainIdentity,
                               profileData: Data, entitlements: [String: Any]) throws {
-        let nested = AppBundle(appDir: appDir).nestedExecutableBundles()
+        let bundle = AppBundle(appDir: appDir)
+        let nested = bundle.nestedExecutableBundles()
         guard nested.isEmpty else {
             throw ReSignError.unsupportedNestedBundle(nested.map { $0.lastPathComponent })
         }
-        let bundle = AppBundle(appDir: appDir)
         // ① 写描述文件
         try profileData.write(to: bundle.embeddedProfileURL())
         // ② entitlements 落临时 plist
