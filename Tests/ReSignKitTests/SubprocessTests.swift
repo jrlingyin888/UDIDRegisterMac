@@ -19,4 +19,12 @@ final class SubprocessTests: XCTestCase {
         let r = try Subprocess.run("/bin/cat", [], input: Data("abc".utf8))
         XCTAssertEqual(r.stdout, "abc")
     }
+    func testHandlesLargeConcurrentStdoutStderrWithoutDeadlock() throws {
+        // yes 快速产生大量 stdout；head 截断。用 sh 同时向 stdout/stderr 各写 >64KB。
+        let script = "for i in $(seq 1 4000); do echo stdoutline$i; echo errline$i 1>&2; done"
+        let r = try Subprocess.run("/bin/sh", ["-c", script])
+        XCTAssertEqual(r.status, 0)
+        XCTAssertTrue(r.stdout.contains("stdoutline4000"))
+        XCTAssertTrue(r.stderr.contains("errline4000"))
+    }
 }

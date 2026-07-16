@@ -22,15 +22,21 @@ public struct Subprocess {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: launchPath)
         p.arguments = args
-        let out = Pipe(), err = Pipe()
+        let out = Pipe(), err = Pipe(), inPipe = Pipe()
         p.standardOutput = out; p.standardError = err
-        let inPipe = Pipe()
-        if input != nil { p.standardInput = inPipe }
+        p.standardInput = inPipe   // 始终给一个可关闭的 stdin，避免子进程继承父进程 stdin
         do { try p.run() } catch { throw SubprocessError.launch(error.localizedDescription) }
-        if let input { inPipe.fileHandleForWriting.write(input); inPipe.fileHandleForWriting.closeFile() }
-        let oData = out.fileHandleForReading.readDataToEndOfFile()
-        let eData = err.fileHandleForReading.readDataToEndOfFile()
+
+        // 并发读 stdout/stderr，避免任一管道缓冲写满导致死锁
+        var oData = Data(), eData = Data()
+        let group = DispatchGroup()
+        let q = DispatchQueue(label: "resignkit.subprocess.io", attributes: .concurrent)
+        q.async(group: group) { oData = out.fileHandleForReading.readDataToEndOfFile() }
+        q.async(group: group) { eData = err.fileHandleForReading.readDataToEndOfFile() }
+        if let input { inPipe.fileHandleForWriting.write(input) }
+        inPipe.fileHandleForWriting.closeFile()   // 关闭 → 子进程 stdin 见 EOF
         p.waitUntilExit()
+        group.wait()
         return Result(status: p.terminationStatus,
                       stdout: String(decoding: oData, as: UTF8.self),
                       stderr: String(decoding: eData, as: UTF8.self))
