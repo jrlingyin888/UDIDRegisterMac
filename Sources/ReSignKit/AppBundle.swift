@@ -45,4 +45,17 @@ public struct AppBundle {
         }
         return nested + [appDir]   // 主 app 最后
     }
+
+    /// 需要各自独立描述文件的嵌套可执行 bundle：PlugIns/*.appex 与 Watch/*.app
+    public func nestedExecutableBundles() -> [URL] {
+        let fm = FileManager.default
+        var out: [URL] = []
+        for (sub, ext) in [("PlugIns", "appex"), ("Watch", "app")] {
+            let dir = appDir.appendingPathComponent(sub)
+            if let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+                out += items.filter { $0.pathExtension == ext }
+            }
+        }
+        return out
+    }
 }

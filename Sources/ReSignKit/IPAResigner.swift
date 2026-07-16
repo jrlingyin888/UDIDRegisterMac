@@ -26,4 +26,12 @@ public struct IPAResigner {
             ["-c", "-k", "--sequesterRsrc", "--keepParent",
              work.appendingPathComponent("Payload").path, outputURL.path])
     }
+
+    /// 推荐入口：entitlements 从描述文件抽取
+    public static func resign(ipaURL: URL, outputURL: URL, identity: TemporaryKeychainIdentity,
+                              mobileprovisionData: Data) throws {
+        let profile = try ProvisioningProfile.load(fromMobileprovisionData: mobileprovisionData)
+        try resign(ipaURL: ipaURL, outputURL: outputURL, identity: identity,
+                   profileData: mobileprovisionData, entitlements: profile.entitlements)
+    }
 }

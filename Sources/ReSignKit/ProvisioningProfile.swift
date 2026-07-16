@@ -6,6 +6,7 @@ public enum ReSignError: Error, LocalizedError {
     case noExecutable
     case codesignFailed(String)
     case identityImport(String)
+    case unsupportedNestedBundle([String])
     public var errorDescription: String? {
         switch self {
         case .invalidProfile: return "描述文件无法解析（不是有效的 .mobileprovision）"
@@ -13,6 +14,8 @@ public enum ReSignError: Error, LocalizedError {
         case .noExecutable: return "app bundle 缺少可执行文件"
         case .codesignFailed(let m): return "codesign 失败：\(m)"
         case .identityImport(let m): return "导入签名身份失败：\(m)"
+        case .unsupportedNestedBundle(let names):
+            return "暂不支持含扩展/Watch 的 app(需为每个子 bundle 单独生成描述文件):\(names.joined(separator: ", "))"
         }
     }
 }
@@ -47,5 +50,14 @@ public struct ProvisioningProfile {
             throw ReSignError.invalidProfile
         }
         return p
+    }
+
+    /// 从 .mobileprovision 原始字节解析（内部写临时文件走 security cms -D）
+    public static func load(fromMobileprovisionData data: Data) throws -> ProvisioningProfile {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mp-\(UUID().uuidString).mobileprovision")
+        try data.write(to: tmp)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        return try load(fromMobileprovision: tmp)
     }
 }
