@@ -51,6 +51,7 @@ extension ASCClient {
         guard let d = Self.jsonObject(resp)?["data"] as? [String: Any], let info = CertificateInfo(json: d) else {
             throw ASCError.http(resp.status, "创建证书返回异常")
         }
+        guard !info.contentDER.isEmpty else { throw ASCError.http(resp.status, "创建证书返回缺少内容") }
         return info
     }
 
@@ -91,6 +92,7 @@ extension ASCClient {
         guard let d = Self.jsonObject(resp)?["data"] as? [String: Any], let info = ProfileInfo(json: d) else {
             throw ASCError.http(resp.status, "创建描述文件返回异常")
         }
+        guard !info.contentData.isEmpty else { throw ASCError.http(resp.status, "创建描述文件返回缺少内容") }
         return info
     }
 

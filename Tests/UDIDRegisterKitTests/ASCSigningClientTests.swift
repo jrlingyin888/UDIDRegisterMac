@@ -84,4 +84,63 @@ final class ASCSigningClientTests: XCTestCase {
             bundleIdResourceId: "B", certificateId: "C", deviceIds: ["D1"])
         XCTAssertEqual(info.contentData, der)
     }
+
+    // MARK: - 请求体/查询串断言（MockHTTP 现在记录请求）
+    func testCreateCertificateSendsPEMcsrContentInBody() async throws {
+        let mock = MockHTTP { _, _ in
+            MockHTTP.json(201, ["data": ["id": "C1", "attributes":
+                ["name": "Dist", "certificateContent": Data([0x30]).base64EncodedString()]]])
+        }
+        let c = ASCClient(http: mock, signJWT: { _ in "T" })
+        _ = try await c.createCertificate(credentials: cred, csrDER: Data([0xDE, 0xAD]), type: .distribution)
+        let body = try XCTUnwrap(mock.requests.last?.body)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        let attrs = (json["data"] as! [String: Any])["attributes"] as! [String: Any]
+        XCTAssertTrue((attrs["csrContent"] as! String).hasPrefix("-----BEGIN CERTIFICATE REQUEST-----"))
+        XCTAssertEqual(attrs["certificateType"] as? String, "DISTRIBUTION")
+    }
+
+    func testCreateAdHocProfileSendsRelationshipsShape() async throws {
+        let mock = MockHTTP { _, _ in
+            MockHTTP.json(201, ["data": ["id": "P", "attributes":
+                ["name": "n", "profileContent": Data([0x77]).base64EncodedString()]]])
+        }
+        let c = ASCClient(http: mock, signJWT: { _ in "T" })
+        _ = try await c.createAdHocProfile(credentials: cred, name: "n",
+            bundleIdResourceId: "B", certificateId: "C", deviceIds: ["D1", "D2"])
+        let body = try XCTUnwrap(mock.requests.last?.body)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        let data = json["data"] as! [String: Any]
+        XCTAssertEqual((data["attributes"] as! [String: Any])["profileType"] as? String, "IOS_APP_ADHOC")
+        let rel = data["relationships"] as! [String: Any]
+        let bundle = (rel["bundleId"] as! [String: Any])["data"] as! [String: Any]  // to-one 对象
+        XCTAssertEqual(bundle["type"] as? String, "bundleIds")
+        XCTAssertEqual(bundle["id"] as? String, "B")
+        let certs = (rel["certificates"] as! [String: Any])["data"] as! [[String: Any]]  // to-many 数组
+        XCTAssertEqual(certs.first?["id"] as? String, "C")
+        let devs = (rel["devices"] as! [String: Any])["data"] as! [[String: Any]]
+        XCTAssertEqual(devs.map { $0["id"] as? String }, ["D1", "D2"])
+    }
+
+    func testListBundleIdsSendsIdentifierFilterQuery() async throws {
+        let mock = MockHTTP { _, _ in MockHTTP.json(200, ["data": []]) }
+        let c = ASCClient(http: mock, signJWT: { _ in "T" })
+        _ = try await c.listBundleIds(credentials: cred, identifier: "com.a.b")
+        let url = try XCTUnwrap(mock.requests.last?.url)
+        let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(q.contains { $0.name == "filter[identifier]" && $0.value == "com.a.b" })
+    }
+
+    func testCreateCertificateThrowsOnMissingContent() async throws {
+        let c = makeClient { _, _ in MockHTTP.json(201, ["data": ["id": "C1", "attributes": ["name": "Dist"]]]) }
+        do { _ = try await c.createCertificate(credentials: cred, csrDER: Data([0x00]), type: .distribution); XCTFail("应抛错") }
+        catch let ASCError.http(status, detail) { XCTAssertEqual(status, 201); XCTAssertTrue(detail.contains("内容")) }
+    }
+
+    func testCreateAdHocProfileThrowsOnMissingContent() async throws {
+        let c = makeClient { _, _ in MockHTTP.json(201, ["data": ["id": "P", "attributes": ["name": "n"]]]) }
+        do { _ = try await c.createAdHocProfile(credentials: cred, name: "n",
+            bundleIdResourceId: "B", certificateId: "C", deviceIds: ["D1"]); XCTFail("应抛错") }
+        catch let ASCError.http(status, detail) { XCTAssertEqual(status, 201); XCTAssertTrue(detail.contains("内容")) }
+    }
 }

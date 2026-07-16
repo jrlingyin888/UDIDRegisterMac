@@ -3,7 +3,7 @@ import Foundation
 public enum CertificateType: String { case distribution = "DISTRIBUTION"; case development = "DEVELOPMENT" }
 public enum ProfileType: String { case iosAppAdHoc = "IOS_APP_ADHOC" }
 
-public struct BundleIdInfo: Hashable {
+public struct BundleIdInfo: Hashable, Sendable {
     public let id: String
     public let identifier: String
     public let name: String
@@ -17,7 +17,7 @@ public struct BundleIdInfo: Hashable {
     }
 }
 
-public struct CertificateInfo: Hashable {
+public struct CertificateInfo: Hashable, Sendable {
     public let id: String
     public let name: String
     public let contentDER: Data
@@ -36,7 +36,7 @@ public struct CertificateInfo: Hashable {
     }
 }
 
-public struct ProfileInfo: Hashable {
+public struct ProfileInfo: Hashable, Sendable {
     public let id: String
     public let name: String
     public let uuid: String?
