@@ -48,4 +48,40 @@ final class ASCSigningClientTests: XCTestCase {
         XCTAssertTrue(pem.hasPrefix("-----BEGIN CERTIFICATE REQUEST-----"))
         XCTAssertTrue(pem.contains("-----END CERTIFICATE REQUEST-----"))
     }
+    func testRefreshDeletesOldThenCreates() async throws {
+        // 同步、加锁的记录器（不要用 detached Task，会与断言竞态）
+        final class Recorder: @unchecked Sendable {
+            private let lock = NSLock(); private var log: [String] = []
+            func add(_ s: String) { lock.lock(); log.append(s); lock.unlock() }
+            var entries: [String] { lock.lock(); defer { lock.unlock() }; return log }
+        }
+        let rec = Recorder()
+        let der = Data([0x0A, 0x0B])
+        let c = ASCClient(http: MockHTTP { method, path in
+            rec.add("\(method) \(path)")
+            if method == "GET" {  // listProfiles 返回一个旧的同名 profile
+                return MockHTTP.json(200, ["data": [["id": "OLD", "attributes": ["name": "n"]]]])
+            }
+            if method == "DELETE" { return HTTPResponse(status: 204, body: Data()) }
+            return MockHTTP.json(201, ["data": ["id": "NEW",
+                "attributes": ["name": "n", "uuid": "U", "profileContent": der.base64EncodedString()]]])
+        }, signJWT: { _ in "T" })
+
+        let info = try await c.refreshAdHocProfile(credentials: cred, name: "n",
+            bundleIdResourceId: "B", certificateId: "C", deviceIds: ["D1", "D2"])
+        XCTAssertEqual(info.id, "NEW")
+        XCTAssertEqual(info.contentData, der)
+        // DELETE 命中旧 profile 路径（同步记录，无竞态）
+        XCTAssertTrue(rec.entries.contains { $0.hasPrefix("DELETE") && $0.contains("v1/profiles/OLD") })
+    }
+    func testCreateAdHocProfileParsesContent() async throws {
+        let der = Data([0x77])
+        let c = makeClient { _, _ in
+            MockHTTP.json(201, ["data": ["id": "P",
+                "attributes": ["name": "n", "profileContent": der.base64EncodedString()]]])
+        }
+        let info = try await c.createAdHocProfile(credentials: cred, name: "n",
+            bundleIdResourceId: "B", certificateId: "C", deviceIds: ["D1"])
+        XCTAssertEqual(info.contentData, der)
+    }
 }

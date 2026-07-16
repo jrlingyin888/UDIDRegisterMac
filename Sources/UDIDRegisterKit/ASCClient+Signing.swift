@@ -54,6 +54,57 @@ extension ASCClient {
         return info
     }
 
+    // MARK: - Profiles
+    public func listProfiles(credentials c: ASCCredentials, name: String) async throws -> [ProfileInfo] {
+        var comp = URLComponents(url: Self.base.appendingPathComponent("v1/profiles"), resolvingAgainstBaseURL: false)!
+        comp.queryItems = [URLQueryItem(name: "filter[name]", value: name),
+                           URLQueryItem(name: "limit", value: "200")]
+        let resp = try await http.send(method: "GET", url: comp.url!, headers: try headers(c), body: nil)
+        try Self.ensureOK(resp)
+        let arr = (Self.jsonObject(resp)?["data"] as? [[String: Any]]) ?? []
+        return arr.compactMap(ProfileInfo.init(json:))
+    }
+
+    public func deleteProfile(credentials c: ASCCredentials, id: String) async throws {
+        let resp = try await http.send(method: "DELETE",
+            url: Self.base.appendingPathComponent("v1/profiles/\(id)"),
+            headers: try headers(c), body: nil)
+        try Self.ensureOK(resp)
+    }
+
+    public func createAdHocProfile(credentials c: ASCCredentials, name: String,
+                                   bundleIdResourceId: String, certificateId: String,
+                                   deviceIds: [String]) async throws -> ProfileInfo {
+        let payload: [String: Any] = ["data": [
+            "type": "profiles",
+            "attributes": ["name": name, "profileType": ProfileType.iosAppAdHoc.rawValue],
+            "relationships": [
+                "bundleId": ["data": ["type": "bundleIds", "id": bundleIdResourceId]],
+                "certificates": ["data": [["type": "certificates", "id": certificateId]]],
+                "devices": ["data": deviceIds.map { ["type": "devices", "id": $0] }]
+            ]
+        ]]
+        let resp = try await http.send(method: "POST",
+            url: Self.base.appendingPathComponent("v1/profiles"),
+            headers: try headers(c), body: try JSONSerialization.data(withJSONObject: payload))
+        try Self.ensureOK(resp)
+        guard let d = Self.jsonObject(resp)?["data"] as? [String: Any], let info = ProfileInfo(json: d) else {
+            throw ASCError.http(resp.status, "创建描述文件返回异常")
+        }
+        return info
+    }
+
+    /// 删除同名旧 profile 后重建，带上传入的全部设备（加设备后自动纳入新 UDID）。
+    public func refreshAdHocProfile(credentials c: ASCCredentials, name: String,
+                                    bundleIdResourceId: String, certificateId: String,
+                                    deviceIds: [String]) async throws -> ProfileInfo {
+        for old in try await listProfiles(credentials: c, name: name) {
+            try await deleteProfile(credentials: c, id: old.id)
+        }
+        return try await createAdHocProfile(credentials: c, name: name,
+            bundleIdResourceId: bundleIdResourceId, certificateId: certificateId, deviceIds: deviceIds)
+    }
+
     // MARK: - Helpers
     static func ensureOK(_ resp: HTTPResponse) throws {
         guard (200...299).contains(resp.status) else {
