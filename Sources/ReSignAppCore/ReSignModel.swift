@@ -105,6 +105,17 @@ public final class ReSignModel {
         } catch { banner = UserFacingMessage.from(error); return false }
     }
 
+    /// 把当前账号的签名身份导出为 p12 写到用户选的位置。口令不能为空。
+    public func exportP12(to url: URL, password: String) -> Bool {
+        guard let a = selected else { banner = "请先选择账号"; return false }
+        guard !password.isEmpty else { banner = "请为导出的 p12 设置一个非空密码"; return false }
+        do {
+            let data = try identity.exportP12(for: a.id, password: password)
+            try data.write(to: url, options: .atomic)
+            banner = nil; return true
+        } catch { banner = UserFacingMessage.from(error); return false }
+    }
+
     /// 一键重签：读 bundleId → 确保 App ID → 全部设备 → 刷描述文件 → 重签 → Finder 显示。
     public func resign() async {
         banner = nil; log = []

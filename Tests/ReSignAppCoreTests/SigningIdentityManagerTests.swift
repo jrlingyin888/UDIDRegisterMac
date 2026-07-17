@@ -70,6 +70,41 @@ final class SigningIdentityManagerTests: XCTestCase {
         catch SigningIdentityError.certNotOnAccount {} // ok
     }
 
+    /// 存一套身份 → exportP12 → 用同密码 openssl 解回，证书内容一致、私钥可用
+    func testExportP12RoundTrips() async throws {
+        for t in ["/usr/bin/openssl"] { guard FileManager.default.isExecutableFile(atPath: t) else { throw XCTSkip("no \(t)") } }
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        // 造 key(PKCS#1 DER) + 自签证书(DER)，一致成对
+        let keyPEM = tmp.appendingPathComponent("k.pem"), keyDER = tmp.appendingPathComponent("k.der")
+        let certPEM = tmp.appendingPathComponent("c.pem"), certDER = tmp.appendingPathComponent("c.der")
+        func ossl(_ a: [String]) throws { _ = try Subprocess.runChecked("/usr/bin/openssl", a) }
+        try ossl(["genrsa", "-out", keyPEM.path, "2048"])
+        try ossl(["rsa", "-in", keyPEM.path, "-outform", "DER", "-out", keyDER.path])
+        try ossl(["req", "-x509", "-new", "-key", keyPEM.path, "-subj", "/CN=ReSign Export Test", "-days", "1", "-out", certPEM.path])
+        try ossl(["x509", "-in", certPEM.path, "-outform", "DER", "-out", certDER.path])
+        let privDER = try Data(contentsOf: keyDER), cDER = try Data(contentsOf: certDER)
+
+        let store = InMemorySigningIdentityStore()
+        let mgr = SigningIdentityManager(store: store)
+        let accID = UUID()
+        try store.save(SigningIdentity(privateKeyDER: privDER, certificateDER: cDER, ascCertificateId: "C"), for: accID)
+
+        let p12 = try mgr.exportP12(for: accID, password: "pw")
+        XCTAssertFalse(p12.isEmpty)
+
+        // 用同密码解回证书，断言与原证书一致
+        let p12URL = tmp.appendingPathComponent("out.p12"); try p12.write(to: p12URL)
+        let back = tmp.appendingPathComponent("back.pem")
+        _ = try Subprocess.runChecked("/usr/bin/openssl", ["pkcs12", "-in", p12URL.path,
+            "-passin", "stdin", "-nokeys", "-clcerts", "-out", back.path], input: Data("pw\n".utf8))
+        let backDER = tmp.appendingPathComponent("back.der")
+        _ = try Subprocess.runChecked("/usr/bin/openssl", ["x509", "-in", back.path, "-outform", "DER", "-out", backDER.path])
+        XCTAssertEqual(try Data(contentsOf: backDER), cDER)
+    }
+
     /// 现造一张自签名代码签名证书 + p12，返回 (p12Data, certDER)
     static func makeTestP12(in dir: URL, password: String) throws -> (Data, Data) {
         func sh(_ args: [String]) throws { _ = try Subprocess.runChecked("/usr/bin/openssl", args) }

@@ -63,4 +63,33 @@ public final class SigningIdentityManager {
         try store.save(identity, for: account.id)
         return identity
     }
+
+    /// 从持久化的 SigningIdentity 组回 .p12：openssl 把 PKCS#1 私钥 DER + 证书 DER 拼成 p12。
+    /// 导出口令走 stdin，不进 argv；明文中间产物用完抹除。
+    public func exportP12(for accountID: UUID, password: String) throws -> Data {
+        guard let id = try store.identity(for: accountID) else { throw SigningIdentityError.badKeyData }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("p12out-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let keyDER = dir.appendingPathComponent("k.der"), keyPEM = dir.appendingPathComponent("k.pem")
+        let certDER = dir.appendingPathComponent("c.der"), certPEM = dir.appendingPathComponent("c.pem")
+        let out = dir.appendingPathComponent("out.p12")
+        try id.privateKeyDER.write(to: keyDER)
+        try id.certificateDER.write(to: certDER)
+        do {
+            try Subprocess.runChecked("/usr/bin/openssl", ["rsa", "-inform", "DER", "-in", keyDER.path, "-out", keyPEM.path])
+            try Subprocess.runChecked("/usr/bin/openssl", ["x509", "-inform", "DER", "-in", certDER.path, "-out", certPEM.path])
+            try Subprocess.runChecked("/usr/bin/openssl", ["pkcs12", "-export", "-inkey", keyPEM.path,
+                "-in", certPEM.path, "-out", out.path, "-passout", "stdin", "-name", "ReSign Distribution"],
+                input: Data((password + "\n").utf8))
+        } catch {
+            throw SigningIdentityError.p12Import(errSecIO)
+        }
+        let data = try Data(contentsOf: out)
+        for u in [keyPEM, keyDER] {   // 抹掉明文私钥中间产物
+            if let n = (try? Data(contentsOf: u))?.count, n > 0 { try? Data(count: n).write(to: u) }
+        }
+        return data
+    }
 }
