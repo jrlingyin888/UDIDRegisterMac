@@ -15,6 +15,20 @@ final class ReSignModelTests: XCTestCase {
         return (m, idStore)
     }
 
+    func testResolveOutputURLUsesSourceDirWhenWritable() {
+        let src = URL(fileURLWithPath: "/tmp/demo.ipa")
+        let out = ReSignModel.resolveOutputURL(for: src, isDirWritable: { _ in true },
+                                               downloadsDir: { URL(fileURLWithPath: "/Users/x/Downloads") })
+        XCTAssertEqual(out, URL(fileURLWithPath: "/tmp/demo-resigned.ipa"))
+    }
+
+    func testResolveOutputURLFallsBackToDownloadsWhenReadOnly() {
+        let src = URL(fileURLWithPath: "/Volumes/DMG/demo.ipa")
+        let out = ReSignModel.resolveOutputURL(for: src, isDirWritable: { _ in false },
+                                               downloadsDir: { URL(fileURLWithPath: "/Users/x/Downloads") })
+        XCTAssertEqual(out, URL(fileURLWithPath: "/Users/x/Downloads/demo-resigned.ipa"))
+    }
+
     func testIdentityStatusReflectsStore() throws {
         let (m, idStore) = try makeModel(client: ASCClient(http: MockHTTP { _, _ in MockHTTP.json(200, ["data": []]) }, signJWT: { _ in "T" }))
         let acc = AppleAccount(displayName: "A", keyID: "K", issuerID: "I")

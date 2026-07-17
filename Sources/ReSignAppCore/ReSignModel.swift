@@ -128,8 +128,10 @@ public final class ReSignModel {
                 credentials: cred, name: "ReSign AdHoc \(bundleID)",
                 bundleIdResourceId: bundle.id, certificateId: sid.ascCertificateId,
                 deviceIds: devices.map { $0.id })
-            let output = ipa.deletingLastPathComponent()
-                .appendingPathComponent(ipa.deletingPathExtension().lastPathComponent + "-resigned.ipa")
+            let output = ReSignModel.resolveOutputURL(for: ipa)
+            if output.deletingLastPathComponent() != ipa.deletingLastPathComponent() {
+                log.append("源目录只读，已改输出到下载文件夹")
+            }
             log.append("重签中…")
             try performResign(ipa, output, sid, profile.contentData)
             log.append("✅ 完成：\(output.lastPathComponent)")
@@ -138,6 +140,21 @@ public final class ReSignModel {
             banner = UserFacingMessage.from(error)
             log.append("❌ 失败：\(banner ?? "")")
         }
+    }
+
+    /// 产出 IPA 的落点：默认与源同目录 `<原名>-resigned.ipa`；源目录不可写（如挂载只读 DMG）时退回 ~/Downloads。
+    public static func resolveOutputURL(
+        for source: URL,
+        isDirWritable: (String) -> Bool = { FileManager.default.isWritableFile(atPath: $0) },
+        downloadsDir: () -> URL = {
+            FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+                ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
+        }
+    ) -> URL {
+        let name = source.deletingPathExtension().lastPathComponent + "-resigned.ipa"
+        let srcDir = source.deletingLastPathComponent()
+        if isDirWritable(srcDir.path) { return srcDir.appendingPathComponent(name) }
+        return downloadsDir().appendingPathComponent(name)
     }
 
     /// 默认重签：还原私钥 → 组临时钥匙串身份 → IPAResigner。
