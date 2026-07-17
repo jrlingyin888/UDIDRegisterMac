@@ -151,4 +151,12 @@ final class ReSignModelTests: XCTestCase {
         XCTAssertEqual(stored?.ascCertificateId, "CERT7")
         XCTAssertEqual(stored?.certificateDER, certDER)
     }
+
+    func testLiveAccountsFileURLIsResignScopedAndSeparateFromRegisterApp() {
+        let url = ReSignModel.liveAccountsFileURL()
+        XCTAssertEqual(url.lastPathComponent, "accounts.json")
+        XCTAssertTrue(url.deletingLastPathComponent().lastPathComponent == "ReSignMac",
+                      "ReSignApp 账号库必须独立目录，实际：\(url.path)")
+        XCTAssertFalse(url.path.contains("/UDIDRegisterMac/"), "不得与注册 app 共用账号文件")
+    }
 }
