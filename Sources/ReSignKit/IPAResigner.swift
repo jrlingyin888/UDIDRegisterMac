@@ -7,6 +7,16 @@ public struct IPAResigner {
         return items.first { $0.pathExtension == "app" }
     }
 
+    /// 重签前 peek：解出 Payload/*.app/Info.plist 的 CFBundleIdentifier
+    public static func readBundleIdentifier(ipaURL: URL) throws -> String {
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("peek-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        try Subprocess.runChecked("/usr/bin/ditto", ["-x", "-k", ipaURL.path, work.path])
+        guard let app = findPayloadApp(in: work) else { throw ReSignError.appNotFound }
+        return try AppBundle(appDir: app).bundleIdentifier()
+    }
+
     public static func resign(ipaURL: URL, outputURL: URL, identity: TemporaryKeychainIdentity,
                               profileData: Data, entitlements: [String: Any]) throws {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("ipa-\(UUID().uuidString)")

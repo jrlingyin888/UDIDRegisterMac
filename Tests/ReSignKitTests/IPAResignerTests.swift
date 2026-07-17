@@ -40,4 +40,18 @@ final class IPAResignerTests: XCTestCase {
         let tmp = try TestTemp.dir(); defer { try? FileManager.default.removeItem(at: tmp) }
         XCTAssertNil(IPAResigner.findPayloadApp(in: tmp))
     }
+
+    func testReadBundleIdentifierFromIPA() throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/ditto") else { throw XCTSkip("no ditto") }
+        let tmp = try TestTemp.dir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let payload = tmp.appendingPathComponent("Payload")
+        let app = payload.appendingPathComponent("Demo.app")
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        try (["CFBundleIdentifier": "com.demo.peek", "CFBundleExecutable": "Demo"] as NSDictionary)
+            .write(to: app.appendingPathComponent("Info.plist"))
+        let ipa = tmp.appendingPathComponent("in.ipa")
+        try Subprocess.runChecked("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", payload.path, ipa.path])
+
+        XCTAssertEqual(try IPAResigner.readBundleIdentifier(ipaURL: ipa), "com.demo.peek")
+    }
 }
