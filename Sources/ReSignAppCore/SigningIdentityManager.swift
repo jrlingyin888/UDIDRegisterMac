@@ -35,17 +35,18 @@ public final class SigningIdentityManager {
         let keyPEM = dir.appendingPathComponent("k.pem"), certPEM = dir.appendingPathComponent("c.pem")
         let keyDERURL = dir.appendingPathComponent("k.der"), certDERURL = dir.appendingPathComponent("c.der")
         do {
-            // 私钥（-nodes 输出未加密 PEM，-nocerts 只要 key）
+            let pwIn = Data((password + "\n").utf8)
+            // 私钥（-nodes 未加密 PEM，-nocerts 只要 key）；密码走 stdin，不进 argv（避免 ps 泄露）
             try Subprocess.runChecked("/usr/bin/openssl", ["pkcs12", "-in", p12.path,
-                "-passin", "pass:\(password)", "-nocerts", "-nodes", "-out", keyPEM.path])
+                "-passin", "stdin", "-nocerts", "-nodes", "-out", keyPEM.path], input: pwIn)
             // 叶子证书
             try Subprocess.runChecked("/usr/bin/openssl", ["pkcs12", "-in", p12.path,
-                "-passin", "pass:\(password)", "-clcerts", "-nokeys", "-out", certPEM.path])
+                "-passin", "stdin", "-clcerts", "-nokeys", "-out", certPEM.path], input: pwIn)
             // 转 DER：私钥用 PKCS#1 RSAPrivateKey DER（与 SecKeyCopyExternalRepresentation 一致），证书用 DER
             try Subprocess.runChecked("/usr/bin/openssl", ["rsa", "-in", keyPEM.path, "-outform", "DER", "-out", keyDERURL.path])
             try Subprocess.runChecked("/usr/bin/openssl", ["x509", "-in", certPEM.path, "-outform", "DER", "-out", certDERURL.path])
         } catch {
-            throw SigningIdentityError.p12Import(errSecAuthFailed)   // 密码错误或 p12 格式无法识别
+            throw SigningIdentityError.p12Import(errSecAuthFailed)   // 密码错误或 p12 格式无法解析
         }
         let privateKeyDER = try Data(contentsOf: keyDERURL)
         let certificateDER = try Data(contentsOf: certDERURL)

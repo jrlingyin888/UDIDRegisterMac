@@ -2,6 +2,7 @@ import XCTest
 @testable import ReSignAppCore
 import UDIDRegisterKit
 import ReSignKit
+import Security
 
 final class SigningIdentityManagerTests: XCTestCase {
     let account = AppleAccount(displayName: "Acme", keyID: "K", issuerID: "I", teamID: "T")
@@ -51,6 +52,10 @@ final class SigningIdentityManagerTests: XCTestCase {
         XCTAssertEqual(identity.certificateDER, certDER)
         XCTAssertFalse(identity.privateKeyDER.isEmpty)
         XCTAssertEqual(try store.identity(for: account.id), identity)
+        // 私钥可还原并签名（证明 openssl 产出的 DER 与 SecKeyCreateWithData 兼容）
+        let key = try SigningKeyCodec.makeRSAPrivateKey(fromDER: identity.privateKeyDER)
+        var err: Unmanaged<CFError>?
+        XCTAssertNotNil(SecKeyCreateSignature(key, .rsaSignatureMessagePKCS1v15SHA256, Data("x".utf8) as CFData, &err))
     }
 
     func testImportP12FailsWhenCertNotOnAccount() async throws {

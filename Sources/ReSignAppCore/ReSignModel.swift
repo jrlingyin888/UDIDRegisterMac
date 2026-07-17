@@ -82,6 +82,29 @@ public final class ReSignModel {
         reload()
     }
 
+    /// 给当前账号自动创建并持久化签名身份（app 自建证书）。
+    public func createIdentity() async -> Bool {
+        guard let a = selected else { banner = "请先选择账号"; return false }
+        busy = true; defer { busy = false }
+        do {
+            _ = try await identity.createAndStore(for: a, cred: try credentials(for: a), client: client)
+            banner = nil; return true
+        } catch { banner = UserFacingMessage.from(error); return false }
+    }
+
+    /// 给当前账号导入 p12 作为签名身份。
+    public func importP12(from url: URL, password: String) async -> Bool {
+        guard let a = selected else { banner = "请先选择账号"; return false }
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        busy = true; defer { busy = false }
+        do {
+            let data = try Data(contentsOf: url)
+            _ = try await identity.importP12(data, password: password, for: a, cred: try credentials(for: a), client: client)
+            banner = nil; return true
+        } catch { banner = UserFacingMessage.from(error); return false }
+    }
+
     /// 一键重签：读 bundleId → 确保 App ID → 全部设备 → 刷描述文件 → 重签 → Finder 显示。
     public func resign() async {
         banner = nil; log = []

@@ -25,7 +25,7 @@ public final class KeychainSigningIdentityStore: SigningIdentityStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: accountID.uuidString,
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked]
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
         let status = SecItemAdd(q as CFDictionary, nil)
         guard status == errSecSuccess else { throw SigningIdentityError.keychain(status) }
     }

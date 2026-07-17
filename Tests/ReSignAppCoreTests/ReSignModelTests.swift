@@ -26,7 +26,7 @@ final class ReSignModelTests: XCTestCase {
     func testResignPipelineOrderAndDeviceIds() async throws {
         // client: findOrCreateBundleId(GET 空→POST 建)、listDevices 两台、createAdHocProfile 返回 profile
         let profileData = Data([0xAB, 0xCD])
-        let c = ASCClient(http: MockHTTP { method, path in
+        let mock = MockHTTP { method, path in
             if path.hasSuffix("v1/bundleIds") { // GET 空 → POST 建
                 return method == "GET" ? MockHTTP.json(200, ["data": []])
                     : MockHTTP.json(201, ["data": ["id": "B1", "attributes": ["identifier": "com.demo.app", "name": "com.demo.app"]]])
@@ -41,7 +41,8 @@ final class ReSignModelTests: XCTestCase {
                     : MockHTTP.json(201, ["data": ["id": "P1", "attributes": ["name": "n", "profileContent": profileData.base64EncodedString()]]])
             }
             return MockHTTP.json(200, ["data": []])
-        }, signJWT: { _ in "T" })
+        }
+        let c = ASCClient(http: mock, signJWT: { _ in "T" })
 
         let (m, idStore) = try makeModel(client: c)
         // 装一个账号 + 一套身份
@@ -63,6 +64,14 @@ final class ReSignModelTests: XCTestCase {
         XCTAssertEqual(cap.1, URL(fileURLWithPath: "/tmp/demo-resigned.ipa"))  // 输出同目录 -resigned
         XCTAssertEqual(cap.2.ascCertificateId, "CERT1")
         XCTAssertEqual(cap.3, profileData)                                     // profile 内容透传
+
+        // 断言描述文件请求确实带上了账号下的全部设备
+        let profilePost = mock.requests.last { $0.method == "POST" && $0.url.path.hasSuffix("v1/profiles") }
+        let body = try XCTUnwrap(profilePost?.body)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        let rel = ((json["data"] as! [String: Any])["relationships"]) as! [String: Any]
+        let devs = ((rel["devices"] as! [String: Any])["data"]) as! [[String: Any]]
+        XCTAssertEqual(Set(devs.compactMap { $0["id"] as? String }), ["D1", "D2"])
     }
 
     func testResignRefusesWhenNoIdentity() async throws {
@@ -94,5 +103,25 @@ final class ReSignModelTests: XCTestCase {
         await m.resign()
         XCTAssertNotNil(m.banner)
         XCTAssertTrue(m.banner!.contains("扩展") || m.banner!.contains("Ext.appex"))
+    }
+
+    func testCreateIdentityStoresAndSetsReady() async throws {
+        let certDER = Data([0x30, 0x01, 0x00])
+        let c = ASCClient(http: MockHTTP { _, _ in
+            MockHTTP.json(201, ["data": ["id": "CERT7",
+                "attributes": ["name": "Dist", "certificateContent": certDER.base64EncodedString()]]])
+        }, signJWT: { _ in "T" })
+        let (m, idStore) = try makeModel(client: c)
+        let acc = AppleAccount(displayName: "A", keyID: "K", issuerID: "I")
+        try m.store.add(acc); try m.secrets.save("PEM", for: acc.id); m.reload(); m.selectedID = acc.id
+
+        let ok = await m.createIdentity()
+
+        XCTAssertTrue(ok)
+        XCTAssertNil(m.banner, "不应有错误：\(m.banner ?? "")")
+        XCTAssertEqual(m.identityStatus(for: acc.id), .ready)
+        let stored = try idStore.identity(for: acc.id)
+        XCTAssertEqual(stored?.ascCertificateId, "CERT7")
+        XCTAssertEqual(stored?.certificateDER, certDER)
     }
 }

@@ -20,7 +20,7 @@ public enum SigningIdentityError: Error, LocalizedError {
         switch self {
         case .keychain(let s): return "钥匙串错误(\(s))"
         case .badKeyData: return "私钥数据无法解析"
-        case .p12Import(let s): return "p12 导入失败(\(s))，检查密码"
+        case .p12Import(let s): return "p12 导入失败(\(s))，检查密码或格式"
         case .certNotOnAccount: return "该 p12 的证书未在此账号注册，无法用于构建描述文件"
         }
     }
