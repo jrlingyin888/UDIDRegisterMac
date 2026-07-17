@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 import UDIDRegisterKit
 @testable import ReSignKit
 
@@ -22,6 +23,14 @@ struct TestSigningFixture {
 
     func cleanup() {
         _ = try? Subprocess.run("/usr/bin/security", ["delete-keychain", keychainPath])
+        // `security import` 会把证书副本泄漏进登录钥匙串（delete-keychain 删不掉这份副本）。
+        // 按 SHA-1 精确删掉这张一次性自签名测试证书的所有登录钥匙串副本——自签名 "ReSignKit Test"
+        // 证书绝不可能是用户的真实证书，按 hash 删是安全的。循环删干净（fixture + TKI 可能各泄一份）。
+        let sha1 = Insecure.SHA1.hash(data: certificateDER).map { String(format: "%02X", $0) }.joined()
+        for _ in 0..<8 {
+            let r = try? Subprocess.run("/usr/bin/security", ["delete-certificate", "-Z", sha1, "login.keychain-db"])
+            if r?.status != 0 { break }
+        }
         for p in cleanupPaths { try? FileManager.default.removeItem(atPath: p) }
     }
 
