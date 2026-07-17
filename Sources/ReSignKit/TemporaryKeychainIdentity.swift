@@ -9,7 +9,12 @@ public final class TemporaryKeychainIdentity {
     private let password = ""
     private var cleaned = false
     private var addedToSearchList = false
-    private var certPreexistedInLogin = false   // import 前登录钥匙串是否已有该证书；决定 cleanup 是否删除
+    // import 前登录钥匙串是否已有该证书；决定 cleanup 是否删除。
+    // **默认必须为 true（保守）**：`self` 在 do 块前已完全初始化，若 do 块内在快照(line ~97)之前抛错
+    // (例如 SecKeyCopyExternalRepresentation 对受保护/不可导出私钥失败)，实例释放时 deinit→cleanup() 仍会运行；
+    // 此刻若默认 false，cleanup 会误删登录钥匙串里与本次 SHA-1 同指纹的证书——那正是用户自己的真实证书。
+    // 默认 true ⇒ 未成功快照就绝不删，宁可漏删泄漏也不误删用户证书。快照成功时(line ~97)会被真实值覆盖。
+    private var certPreexistedInLogin = true
 
     private static let searchListLock = NSLock()
 
@@ -104,7 +109,10 @@ public final class TemporaryKeychainIdentity {
             // 更彻底的方案是全程不落盘、直接 SecItemAdd 导入内存中的 key+cert——留作后续优化。
             for u in [certDERURL, keyPEMURL, certPEMURL, p12URL] { TemporaryKeychainIdentity.shred(u) }
         } catch {
-            // init 失败时 deinit 不会被调用——必须在这里抹掉可能已落盘的私钥 PEM/p12 + 临时钥匙串
+            // 注意：`self` 在进入 do 块前两个 let 已赋值 ⇒ 完全初始化；因此 do 块内抛错后实例释放时
+            // deinit→cleanup() **仍会运行**。cleanup() 是否删登录钥匙串证书由 certPreexistedInLogin 决定，
+            // 该字段默认 true（保守），若抛错发生在快照之前则保持 true ⇒ cleanup 不会误删用户真实证书。
+            // 这里仍主动抹掉可能已落盘的私钥 PEM/p12 + 临时钥匙串（不依赖 deinit 时序，尽早缩短明文窗口）。
             for u in [keyPEM, certPEM, p12].compactMap({ $0 }) { TemporaryKeychainIdentity.shred(u) }
             _ = try? Subprocess.run("/usr/bin/security", ["delete-keychain", keychainPath])
             try? FileManager.default.removeItem(at: dir)
