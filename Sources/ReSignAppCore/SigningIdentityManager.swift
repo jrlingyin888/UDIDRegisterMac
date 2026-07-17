@@ -75,6 +75,12 @@ public final class SigningIdentityManager {
         let keyDER = dir.appendingPathComponent("k.der"), keyPEM = dir.appendingPathComponent("k.pem")
         let certDER = dir.appendingPathComponent("c.der"), certPEM = dir.appendingPathComponent("c.pem")
         let out = dir.appendingPathComponent("out.p12")
+        // 抹掉明文私钥中间产物；LIFO 下此 defer 后注册、先执行（在删目录之前），成功/失败都跑。
+        defer {
+            for u in [keyPEM, keyDER] {
+                if let n = (try? Data(contentsOf: u))?.count, n > 0 { try? Data(count: n).write(to: u) }
+            }
+        }
         try id.privateKeyDER.write(to: keyDER)
         try id.certificateDER.write(to: certDER)
         do {
@@ -86,10 +92,6 @@ public final class SigningIdentityManager {
         } catch {
             throw SigningIdentityError.p12Import(errSecIO)
         }
-        let data = try Data(contentsOf: out)
-        for u in [keyPEM, keyDER] {   // 抹掉明文私钥中间产物
-            if let n = (try? Data(contentsOf: u))?.count, n > 0 { try? Data(count: n).write(to: u) }
-        }
-        return data
+        return try Data(contentsOf: out)
     }
 }

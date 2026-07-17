@@ -103,6 +103,24 @@ final class SigningIdentityManagerTests: XCTestCase {
         let backDER = tmp.appendingPathComponent("back.der")
         _ = try Subprocess.runChecked("/usr/bin/openssl", ["x509", "-in", back.path, "-outform", "DER", "-out", backDER.path])
         XCTAssertEqual(try Data(contentsOf: backDER), cDER)
+
+        // 用同密码解回私钥，断言与原私钥 DER 逐字节一致（证明 p12 里装的是对的 key）
+        let backKeyPEM = tmp.appendingPathComponent("backkey.pem")
+        _ = try Subprocess.runChecked("/usr/bin/openssl", ["pkcs12", "-in", p12URL.path,
+            "-passin", "stdin", "-nocerts", "-nodes", "-out", backKeyPEM.path], input: Data("pw\n".utf8))
+        let backKeyDER = tmp.appendingPathComponent("backkey.der")
+        _ = try Subprocess.runChecked("/usr/bin/openssl", ["rsa", "-in", backKeyPEM.path, "-outform", "DER", "-out", backKeyDER.path])
+        XCTAssertEqual(try Data(contentsOf: backKeyDER), privDER)
+    }
+
+    /// 账号上没有存过身份时，exportP12 应抛 .badKeyData
+    func testExportP12ThrowsWhenNoIdentity() throws {
+        let mgr = SigningIdentityManager(store: InMemorySigningIdentityStore())
+        XCTAssertThrowsError(try mgr.exportP12(for: UUID(), password: "pw")) { error in
+            guard case SigningIdentityError.badKeyData = error else {
+                return XCTFail("应为 .badKeyData，实际 \(error)")
+            }
+        }
     }
 
     /// 现造一张自签名代码签名证书 + p12，返回 (p12Data, certDER)

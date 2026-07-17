@@ -119,6 +119,19 @@ final class ReSignModelTests: XCTestCase {
         XCTAssertTrue(m.banner!.contains("扩展") || m.banner!.contains("Ext.appex"))
     }
 
+    func testExportP12RejectsEmptyPassword() throws {
+        let c = ASCClient(http: MockHTTP { _, _ in MockHTTP.json(200, ["data": []]) }, signJWT: { _ in "T" })
+        let (m, idStore) = try makeModel(client: c)
+        let acc = AppleAccount(displayName: "A", keyID: "K", issuerID: "I")
+        try m.store.add(acc); try m.secrets.save("PEM", for: acc.id); m.reload(); m.selectedID = acc.id
+        try idStore.save(SigningIdentity(privateKeyDER: Data([1]), certificateDER: Data([2]), ascCertificateId: "C"), for: acc.id)
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).p12")
+        let ok = m.exportP12(to: out, password: "")
+        XCTAssertFalse(ok)                       // 空口令被拒
+        XCTAssertNotNil(m.banner)                // 且有提示 banner
+        XCTAssertFalse(FileManager.default.fileExists(atPath: out.path))  // 未落盘
+    }
+
     func testCreateIdentityStoresAndSetsReady() async throws {
         let certDER = Data([0x30, 0x01, 0x00])
         let c = ASCClient(http: MockHTTP { _, _ in
