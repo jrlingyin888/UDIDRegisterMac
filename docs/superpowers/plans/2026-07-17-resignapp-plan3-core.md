@@ -61,7 +61,7 @@ Expected: 编译失败（`ReSignAppCore` 模块不存在）。
 
 ```swift
         .target(name: "ReSignAppCore", dependencies: ["UDIDRegisterKit", "ReSignKit"]),
-        .testTarget(name: "ReSignAppCoreTests", dependencies: ["ReSignAppCore"]),
+        .testTarget(name: "ReSignAppCoreTests", dependencies: ["ReSignAppCore", "ReSignKit", "UDIDRegisterKit"]),
         .executableTarget(name: "ReSignApp", dependencies: ["ReSignAppCore"]),
 ```
 
@@ -774,6 +774,7 @@ git commit -m "feat(resignapp): ReSignModel accounts + config import + identity 
   - 可注入闭包（默认真实实现，测试注入假的）：
     - `var readBundleID: (URL) throws -> String`（默认 `IPAResigner.readBundleIdentifier`）
     - `var performResign: (_ ipaURL: URL, _ outputURL: URL, _ identity: SigningIdentity, _ mobileprovisionData: Data) throws -> Void`（默认 `ReSignModel.defaultPerformResign`）
+    - `var revealInFinder: (URL) -> Void`（默认 `NSWorkspace`；测试注入空实现避免弹 Finder）
   - `func resign() async`（跑 8 步流水线，写 `log`，出错写 `banner`）
   - `static func defaultPerformResign(...)`（组 `TemporaryKeychainIdentity` + `IPAResigner.resign`）
 
@@ -811,6 +812,7 @@ git commit -m "feat(resignapp): ReSignModel accounts + config import + identity 
         m.readBundleID = { _ in "com.demo.app" }
         var captured: (URL, URL, SigningIdentity, Data)?
         m.performResign = { ipa, out, id, mp in captured = (ipa, out, id, mp) }
+        m.revealInFinder = { _ in }     // 避免测试弹 Finder
         m.selectedIPA = URL(fileURLWithPath: "/tmp/demo.ipa")
 
         await m.resign()
@@ -866,6 +868,7 @@ Expected: 编译失败（`resign`/`readBundleID`/`performResign` 未定义）。
     public var readBundleID: (URL) throws -> String = { try IPAResigner.readBundleIdentifier(ipaURL: $0) }
     public var performResign: (_ ipaURL: URL, _ outputURL: URL, _ identity: SigningIdentity, _ mobileprovisionData: Data) throws -> Void
         = ReSignModel.defaultPerformResign
+    public var revealInFinder: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
 ```
 
 加流水线与默认重签实现：
@@ -898,7 +901,7 @@ Expected: 编译失败（`resign`/`readBundleID`/`performResign` 未定义）。
             log.append("重签中…")
             try performResign(ipa, output, sid, profile.contentData)
             log.append("✅ 完成：\(output.lastPathComponent)")
-            NSWorkspace.shared.activateFileViewerSelecting([output])
+            revealInFinder(output)
         } catch {
             banner = UserFacingMessage.from(error)
             log.append("❌ 失败：\(banner ?? "")")
