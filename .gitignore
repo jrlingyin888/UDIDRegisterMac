@@ -3,4 +3,4 @@ dist/
 .superpowers/
 .DS_Store
 *.xcuserstate
-Resources/AppIcon.iconset/
+Resources/*.iconset/
