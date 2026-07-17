@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import UDIDRegisterKit
+import ReSignKit
 
 public final class SigningIdentityManager {
     let store: SigningIdentityStore
@@ -22,40 +23,42 @@ public final class SigningIdentityManager {
         return identity
     }
 
-    /// 导入 p12：拆出私钥+证书；按证书内容在账号已注册证书里匹配 ASC id；持久化。
+    /// 导入 p12：用 openssl 从 p12 抽出私钥(PKCS#1 DER)+证书(DER)，**不碰 Security import、不碰钥匙串**；
+    /// 按证书内容在账号已注册证书里匹配 ASC id；持久化。
     public func importP12(_ data: Data, password: String, for account: AppleAccount,
                           cred: ASCCredentials, client: ASCClient) async throws -> SigningIdentity {
-        var opts: [String: Any] = [kSecImportExportPassphrase as String: password]
-        // 仅在内存中导入，不落地默认钥匙串：既避免污染用户登录钥匙串，也让拿到的 SecKey
-        // 走新式（非 CSSM legacy）路径，才能用 SecKeyCopyExternalRepresentation 导出明文 DER。
-        if #available(macOS 15.0, *) {
-            opts[kSecImportToMemoryOnly as String] = true
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("p12-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let p12 = dir.appendingPathComponent("in.p12"); try data.write(to: p12)
+        let keyPEM = dir.appendingPathComponent("k.pem"), certPEM = dir.appendingPathComponent("c.pem")
+        let keyDERURL = dir.appendingPathComponent("k.der"), certDERURL = dir.appendingPathComponent("c.der")
+        do {
+            // 私钥（-nodes 输出未加密 PEM，-nocerts 只要 key）
+            try Subprocess.runChecked("/usr/bin/openssl", ["pkcs12", "-in", p12.path,
+                "-passin", "pass:\(password)", "-nocerts", "-nodes", "-out", keyPEM.path])
+            // 叶子证书
+            try Subprocess.runChecked("/usr/bin/openssl", ["pkcs12", "-in", p12.path,
+                "-passin", "pass:\(password)", "-clcerts", "-nokeys", "-out", certPEM.path])
+            // 转 DER：私钥用 PKCS#1 RSAPrivateKey DER（与 SecKeyCopyExternalRepresentation 一致），证书用 DER
+            try Subprocess.runChecked("/usr/bin/openssl", ["rsa", "-in", keyPEM.path, "-outform", "DER", "-out", keyDERURL.path])
+            try Subprocess.runChecked("/usr/bin/openssl", ["x509", "-in", certPEM.path, "-outform", "DER", "-out", certDERURL.path])
+        } catch {
+            throw SigningIdentityError.p12Import(errSecAuthFailed)   // 密码错误或 p12 格式无法识别
         }
-        var items: CFArray?
-        let status = SecPKCS12Import(data as CFData, opts as CFDictionary, &items)
-        guard status == errSecSuccess,
-              let arr = items as? [[String: Any]], let first = arr.first,
-              let secIdentity = first[kSecImportItemIdentity as String] else {
-            throw SigningIdentityError.p12Import(status)
-        }
-        let identityRef = secIdentity as! SecIdentity
-        var privKey: SecKey?
-        guard SecIdentityCopyPrivateKey(identityRef, &privKey) == errSecSuccess, let key = privKey else {
-            throw SigningIdentityError.p12Import(errSecInvalidItemRef)
-        }
-        var certRef: SecCertificate?
-        guard SecIdentityCopyCertificate(identityRef, &certRef) == errSecSuccess, let cert = certRef else {
-            throw SigningIdentityError.p12Import(errSecInvalidItemRef)
-        }
-        let certDER = SecCertificateCopyData(cert) as Data
+        let privateKeyDER = try Data(contentsOf: keyDERURL)
+        let certificateDER = try Data(contentsOf: certDERURL)
+        // 抹掉明文中间产物（defer 会删目录，这里再覆写一遍私钥文件降低残留窗口）
+        for u in [keyPEM, keyDERURL] { try? Data(count: (try? Data(contentsOf: u))?.count ?? 0).write(to: u) }
 
         // 在账号已注册证书里按内容匹配出 ASC 资源 id
         let onAccount = try await client.listCertificates(credentials: cred, type: .distribution)
-        guard let match = onAccount.first(where: { $0.contentDER == certDER }) else {
+        guard let match = onAccount.first(where: { $0.contentDER == certificateDER }) else {
             throw SigningIdentityError.certNotOnAccount
         }
-        let identity = SigningIdentity(privateKeyDER: try SigningKeyCodec.privateKeyDER(key),
-                                       certificateDER: certDER, ascCertificateId: match.id)
+        let identity = SigningIdentity(privateKeyDER: privateKeyDER,
+                                       certificateDER: certificateDER, ascCertificateId: match.id)
         try store.save(identity, for: account.id)
         return identity
     }
