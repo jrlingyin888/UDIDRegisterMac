@@ -9,6 +9,7 @@ public final class TemporaryKeychainIdentity {
     private let password = ""
     private var cleaned = false
     private var addedToSearchList = false
+    private var certPreexistedInLogin = false   // import 前登录钥匙串是否已有该证书；决定 cleanup 是否删除
 
     private static let searchListLock = NSLock()
 
@@ -46,6 +47,19 @@ public final class TemporaryKeychainIdentity {
     private static func isTempEntry(_ path: String) -> Bool {
         path.contains("/resign-") && path.contains("signing.keychain")
     }
+    /// import 前快照：登录钥匙串是否已含该 SHA-1 的证书。
+    /// 命令本身失败时保守返回 true（宁可漏删泄漏，也**绝不误删用户真实证书**）。
+    private static func loginKeychainContainsCert(sha1: String) -> Bool {
+        guard let login = try? resolveLoginKeychainPath(), !login.isEmpty else { return true }
+        guard let r = try? Subprocess.run("/usr/bin/security", ["find-certificate", "-a", "-Z", login]),
+              r.status == 0 else { return true }
+        return r.stdout.uppercased().contains(sha1)
+    }
+    /// 从登录钥匙串删掉该 SHA-1 的证书（只在 import 前不存在时调用——即只删我们新增那份）。
+    private static func deleteLoginKeychainLeak(sha1: String) {
+        guard let login = try? resolveLoginKeychainPath(), !login.isEmpty else { return }
+        _ = try? Subprocess.run("/usr/bin/security", ["delete-certificate", "-Z", sha1, login])
+    }
 
     public init(privateKey: SecKey, certificateDER: Data, commonName: String) throws {
         self.signingIdentity = TemporaryKeychainIdentity.sha1Hex(certificateDER)
@@ -78,6 +92,8 @@ public final class TemporaryKeychainIdentity {
             let p12Password = "t\(UUID().uuidString.prefix(12))"
             try Subprocess.runChecked("/usr/bin/openssl", ["pkcs12", "-export", "-inkey", keyPEMURL.path,
                 "-in", certPEMURL.path, "-out", p12URL.path, "-passout", "pass:\(p12Password)", "-name", commonName])
+            // 快照：import 会往登录钥匙串泄漏一份证书副本；记录它此刻是否已存在，供 cleanup 决定是否删除。
+            self.certPreexistedInLogin = TemporaryKeychainIdentity.loginKeychainContainsCert(sha1: signingIdentity)
             try Subprocess.runChecked("/usr/bin/security", ["import", p12URL.path, "-k", keychainPath,
                 "-P", p12Password, "-T", "/usr/bin/codesign", "-T", "/usr/bin/security"])
             // 放行 codesign 无交互使用私钥。特意不调用 add-trusted-cert(改 SecTrustSettings 会弹授权框);
@@ -128,6 +144,10 @@ public final class TemporaryKeychainIdentity {
             Self.searchListLock.unlock()
         }
         _ = try? Subprocess.run("/usr/bin/security", ["delete-keychain", keychainPath])
+        // 只删「我们导入时新增那份」：import 前登录钥匙串没有才删，绝不碰用户自己的证书。
+        if !certPreexistedInLogin {
+            Self.deleteLoginKeychainLeak(sha1: signingIdentity)
+        }
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: keychainPath).deletingLastPathComponent())
     }
     deinit { cleanup() }
