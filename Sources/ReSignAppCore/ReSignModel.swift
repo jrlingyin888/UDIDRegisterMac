@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import AppKit
 import UDIDRegisterKit
 import ReSignKit
 
@@ -19,6 +20,11 @@ public final class ReSignModel {
     public var busy = false
     public var banner: String?
     public var selectedIPA: URL?
+
+    public var readBundleID: (URL) throws -> String = { try IPAResigner.readBundleIdentifier(ipaURL: $0) }
+    public var performResign: (_ ipaURL: URL, _ outputURL: URL, _ identity: SigningIdentity, _ mobileprovisionData: Data) throws -> Void
+        = ReSignModel.defaultPerformResign
+    public var revealInFinder: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
 
     let store: AccountStore
     let secrets: SecretStore
@@ -74,5 +80,50 @@ public final class ReSignModel {
         try? identity.store.remove(for: id)
         try? store.remove(id: id)
         reload()
+    }
+
+    /// 一键重签：读 bundleId → 确保 App ID → 全部设备 → 刷描述文件 → 重签 → Finder 显示。
+    public func resign() async {
+        banner = nil; log = []
+        guard let a = selected else { banner = "请先选择账号"; return }
+        guard let ipa = selectedIPA else { banner = "请先选择 IPA"; return }
+        guard let sid = (try? identity.identity(for: a.id)) ?? nil else {
+            banner = "该账号还没有签名身份，请先「自动创建」或「导入 p12」"; return
+        }
+        busy = true; defer { busy = false }
+        do {
+            let cred = try credentials(for: a)
+            log.append("读取 IPA 的 bundle id…")
+            let bundleID = try readBundleID(ipa)
+            log.append("bundle id：\(bundleID)")
+            log.append("确认 App ID…")
+            let bundle = try await client.findOrCreateBundleId(credentials: cred, identifier: bundleID, name: bundleID)
+            log.append("获取账号下全部设备…")
+            let devices = try await client.listDevices(credentials: cred)
+            log.append("设备 \(devices.count) 台，刷新 Ad Hoc 描述文件…")
+            let profile = try await client.refreshAdHocProfile(
+                credentials: cred, name: "ReSign AdHoc \(bundleID)",
+                bundleIdResourceId: bundle.id, certificateId: sid.ascCertificateId,
+                deviceIds: devices.map { $0.id })
+            let output = ipa.deletingLastPathComponent()
+                .appendingPathComponent(ipa.deletingPathExtension().lastPathComponent + "-resigned.ipa")
+            log.append("重签中…")
+            try performResign(ipa, output, sid, profile.contentData)
+            log.append("✅ 完成：\(output.lastPathComponent)")
+            revealInFinder(output)
+        } catch {
+            banner = UserFacingMessage.from(error)
+            log.append("❌ 失败：\(banner ?? "")")
+        }
+    }
+
+    /// 默认重签：还原私钥 → 组临时钥匙串身份 → IPAResigner。
+    public static func defaultPerformResign(ipaURL: URL, outputURL: URL,
+                                            identity sid: SigningIdentity, mobileprovisionData: Data) throws {
+        let key = try SigningKeyCodec.makeRSAPrivateKey(fromDER: sid.privateKeyDER)
+        let tki = try TemporaryKeychainIdentity(privateKey: key, certificateDER: sid.certificateDER, commonName: "ReSign")
+        defer { tki.cleanup() }
+        try tki.addToSearchListForCodesign()
+        try IPAResigner.resign(ipaURL: ipaURL, outputURL: outputURL, identity: tki, mobileprovisionData: mobileprovisionData)
     }
 }
