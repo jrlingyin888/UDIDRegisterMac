@@ -8,6 +8,7 @@ struct AccountsSheet: View {
     @Environment(ReSignModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var importing = false
+    @State private var pendingDelete: AppleAccount?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -20,12 +21,25 @@ struct AccountsSheet: View {
                             Text(a.issuerID).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button(role: .destructive) { model.deleteAccount(id: a.id) } label: {
+                        Button(role: .destructive) { pendingDelete = a } label: {
                             Image(systemName: "trash")
                         }.buttonStyle(.borderless)
                     }
                 }
             }.frame(minHeight: 160)
+            .confirmationDialog(
+                "删除账号",
+                isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+                presenting: pendingDelete
+            ) { acct in
+                Button("删除", role: .destructive) {
+                    model.deleteAccount(id: acct.id)
+                    pendingDelete = nil
+                }
+                Button("取消", role: .cancel) { pendingDelete = nil }
+            } message: { acct in
+                Text("将删除「\(acct.displayName)」的签名身份（含私钥），此操作不可恢复。如果该证书是 app 自动创建的，请先「导出 p12…」备份，再确认删除。")
+            }
             HStack {
                 Button {
                     importConfig()

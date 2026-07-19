@@ -144,7 +144,11 @@ public final class ReSignModel {
                 log.append("源目录只读，已改输出到下载文件夹")
             }
             log.append("重签中…")
-            try performResign(ipa, output, sid, profile.contentData)
+            let work = performResign
+            let mobileprovisionData = profile.contentData
+            try await Task.detached {
+                try work(ipa, output, sid, mobileprovisionData)
+            }.value
             log.append("✅ 完成：\(output.lastPathComponent)")
             revealInFinder(output)
         } catch {
