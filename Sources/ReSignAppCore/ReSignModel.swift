@@ -127,25 +127,14 @@ public final class ReSignModel {
         busy = true; defer { busy = false }
         do {
             let cred = try credentials(for: a)
-            log.append("读取 IPA 的 bundle id…")
-            let bundleID = try readBundleID(ipa)
-            log.append("bundle id：\(bundleID)")
-            log.append("确认 App ID…")
-            let bundle = try await client.findOrCreateBundleId(credentials: cred, identifier: bundleID, name: bundleID)
-            log.append("获取账号下全部设备…")
-            let devices = try await client.listDevices(credentials: cred)
-            log.append("设备 \(devices.count) 台，刷新 Ad Hoc 描述文件…")
-            let profile = try await client.refreshAdHocProfile(
-                credentials: cred, name: "ReSign AdHoc \(bundleID)",
-                bundleIdResourceId: bundle.id, certificateId: sid.ascCertificateId,
-                deviceIds: devices.map { $0.id })
+            let built = try await buildAdHocProfile(ipa: ipa, cred: cred, sid: sid)
             let output = ReSignModel.resolveOutputURL(for: ipa)
             if output.deletingLastPathComponent() != ipa.deletingLastPathComponent() {
                 log.append("源目录只读，已改输出到下载文件夹")
             }
             log.append("重签中…")
             let work = performResign
-            let mobileprovisionData = profile.contentData
+            let mobileprovisionData = built.profileData
             try await Task.detached {
                 try work(ipa, output, sid, mobileprovisionData)
             }.value
@@ -170,6 +159,48 @@ public final class ReSignModel {
         let srcDir = source.deletingLastPathComponent()
         if isDirWritable(srcDir.path) { return srcDir.appendingPathComponent(name) }
         return downloadsDir().appendingPathComponent(name)
+    }
+
+    /// 生成「当前账号 + 选中 IPA 的 bundle id」对应的最新 Ad Hoc 描述文件（含账号下全部设备）。
+    /// resign() 与 exportProfile() 共用，避免重复；每步 append 到 log。
+    private func buildAdHocProfile(ipa: URL, cred: ASCCredentials,
+                                   sid: SigningIdentity) async throws -> (bundleID: String, profileData: Data) {
+        log.append("读取 IPA 的 bundle id…")
+        let bundleID = try readBundleID(ipa)
+        log.append("bundle id：\(bundleID)")
+        log.append("确认 App ID…")
+        let bundle = try await client.findOrCreateBundleId(credentials: cred, identifier: bundleID, name: bundleID)
+        log.append("获取账号下全部设备…")
+        let devices = try await client.listDevices(credentials: cred)
+        log.append("设备 \(devices.count) 台，刷新 Ad Hoc 描述文件…")
+        let profile = try await client.refreshAdHocProfile(
+            credentials: cred, name: "ReSign AdHoc \(bundleID)",
+            bundleIdResourceId: bundle.id, certificateId: sid.ascCertificateId,
+            deviceIds: devices.map { $0.id })
+        return (bundleID, profile.contentData)
+    }
+
+    /// 导出「含当前全部设备」的 Ad Hoc 描述文件（.mobileprovision），供配 p12 在别处重签。
+    /// 按选中 IPA 的 bundle id 生成；是一次**快照**——之后再加设备需重新导出。
+    public func exportProfile(to url: URL) async -> Bool {
+        banner = nil; log = []
+        guard let a = selected else { banner = "请先选择账号"; return false }
+        guard let ipa = selectedIPA else { banner = "请先选择 IPA（描述文件按其 bundle id 生成）"; return false }
+        guard let sid = (try? identity.identity(for: a.id)) ?? nil else {
+            banner = "该账号还没有签名身份，请先「自动创建」或「导入 p12」"; return false
+        }
+        busy = true; defer { busy = false }
+        do {
+            let cred = try credentials(for: a)
+            let built = try await buildAdHocProfile(ipa: ipa, cred: cred, sid: sid)
+            try built.profileData.write(to: url, options: .atomic)
+            log.append("✅ 描述文件已导出：\(url.lastPathComponent)")
+            return true
+        } catch {
+            banner = UserFacingMessage.from(error)
+            log.append("❌ 失败：\(banner ?? "")")
+            return false
+        }
     }
 
     /// 默认重签：还原私钥 → 组临时钥匙串身份 → IPAResigner。

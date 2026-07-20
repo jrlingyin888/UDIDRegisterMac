@@ -47,8 +47,12 @@ struct ReSignRootView: View {
         }
     }
 
+    private var identityReady: Bool {
+        model.selected.map { model.identityStatus(for: $0.id) == .ready } ?? false
+    }
+
     @ViewBuilder private var identitySection: some View {
-        let ready = model.selected.map { model.identityStatus(for: $0.id) == .ready } ?? false
+        let ready = identityReady
         HStack(spacing: 10) {
             Label(ready ? "签名身份已就绪" : "尚未创建签名身份",
                   systemImage: ready ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
@@ -82,15 +86,24 @@ struct ReSignRootView: View {
     }
 
     @ViewBuilder private var resignSection: some View {
-        HStack {
-            Button {
-                Task { await model.resign() }
-            } label: {
-                Label("一键重签", systemImage: "signature").frame(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Button {
+                    Task { await model.resign() }
+                } label: {
+                    Label("一键重签", systemImage: "signature").frame(maxWidth: .infinity)
+                }
+                .controlSize(.large).buttonStyle(.borderedProminent)
+                .disabled(model.busy || model.selected == nil || model.selectedIPA == nil)
+                if model.busy { ProgressView().controlSize(.small) }
             }
-            .controlSize(.large).buttonStyle(.borderedProminent)
-            .disabled(model.busy || model.selected == nil || model.selectedIPA == nil)
-            if model.busy { ProgressView().controlSize(.small) }
+            HStack(spacing: 8) {
+                Button("导出描述文件…") { pickProfileToExport() }
+                    .disabled(model.busy || model.selected == nil || model.selectedIPA == nil || !identityReady)
+                Text("含当前全部设备，配 p12 可在别处重签（快照，加设备后需重导）")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
         }
     }
 
@@ -131,6 +144,13 @@ struct ReSignRootView: View {
         if let p12 = UTType(filenameExtension: "p12") { panel.allowedContentTypes = [p12] }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         pwSheet = .exportP12(url)
+    }
+    private func pickProfileToExport() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "ReSign AdHoc.mobileprovision"
+        if let mp = UTType(filenameExtension: "mobileprovision") { panel.allowedContentTypes = [mp] }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { _ = await model.exportProfile(to: url) }
     }
 
     @ViewBuilder private func passwordSheet(for action: PasswordAction) -> some View {
