@@ -7,6 +7,15 @@ final class ASCClientTests: XCTestCase {
         ASCClient(http: MockHTTP(h), signJWT: { _ in "TESTTOKEN" })  // 跳过真实签名
     }
 
+    func testSanitizedAppIdNameKeepsOnlyAlnumAndSpaces() {
+        // App ID 的 name 苹果只允许字母数字和空格；bundle id 里的 . _ - 要换成空格
+        XCTAssertEqual(ASCClient.sanitizedAppIdName("com.seeyon.m3.appstore.new.phone"),
+                       "com seeyon m3 appstore new phone")
+        XCTAssertEqual(ASCClient.sanitizedAppIdName("a_b-c.d"), "a b c d")
+        XCTAssertEqual(ASCClient.sanitizedAppIdName("Already Valid 1"), "Already Valid 1")
+        XCTAssertEqual(ASCClient.sanitizedAppIdName("...--"), "App")   // 全非法 → 回退，不能为空
+    }
+
     func testCreatedReturnsStatus() async throws {
         let c = makeClient { _, _ in
             MockHTTP.json(201, ["data": ["id": "X", "attributes": ["status": "PROCESSING"]]])

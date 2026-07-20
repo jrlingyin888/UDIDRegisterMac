@@ -12,9 +12,19 @@ extension ASCClient {
         return arr.compactMap(BundleIdInfo.init(json:))
     }
 
+    /// App ID 的 name 字段苹果只允许「字母数字和空格」（bundle id 里的 . _ - 会被拒）。
+    /// 把非法字符换成空格、合并多余空格并裁剪；全非法时回退为 "App"（不能为空）。
+    static func sanitizedAppIdName(_ raw: String) -> String {
+        let mapped = raw.map { ch -> Character in
+            (ch.isASCII && (ch.isLetter || ch.isNumber)) || ch == " " ? ch : " "
+        }
+        let collapsed = String(mapped).split(separator: " ").joined(separator: " ")
+        return collapsed.isEmpty ? "App" : collapsed
+    }
+
     public func createBundleId(credentials c: ASCCredentials, identifier: String, name: String) async throws -> BundleIdInfo {
         let payload: [String: Any] = ["data": ["type": "bundleIds",
-            "attributes": ["identifier": identifier, "name": name, "platform": "IOS"]]]
+            "attributes": ["identifier": identifier, "name": Self.sanitizedAppIdName(name), "platform": "IOS"]]]
         let resp = try await http.send(method: "POST",
             url: Self.base.appendingPathComponent("v1/bundleIds"),
             headers: try headers(c), body: try JSONSerialization.data(withJSONObject: payload))
