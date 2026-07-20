@@ -100,6 +100,26 @@ final class ASCSigningClientTests: XCTestCase {
         XCTAssertEqual(attrs["certificateType"] as? String, "DISTRIBUTION")
     }
 
+    /// 真实调用链验证：findOrCreateBundleId 建 App ID 时，实际发出的 name 必须已消毒（无点）。
+    /// 复现用户报错的 bundle id：com.seeyon.m3.appstore.new.phone
+    func testFindOrCreateBundleIdSanitizesNameInPostBody() async throws {
+        let mock = MockHTTP { method, _ in
+            method == "GET" ? MockHTTP.json(200, ["data": []])   // 账号上无此 App ID → 走创建分支
+                : MockHTTP.json(201, ["data": ["id": "Bnew", "attributes":
+                    ["identifier": "com.seeyon.m3.appstore.new.phone", "name": "com seeyon m3 appstore new phone"]]])
+        }
+        let c = ASCClient(http: mock, signJWT: { _ in "T" })
+        _ = try await c.findOrCreateBundleId(credentials: cred,
+            identifier: "com.seeyon.m3.appstore.new.phone",
+            name: "com.seeyon.m3.appstore.new.phone")   // app 传进来的就是带点的 bundle id
+        let post = try XCTUnwrap(mock.requests.last { $0.method == "POST" && $0.url.path.hasSuffix("v1/bundleIds") })
+        let json = try JSONSerialization.jsonObject(with: try XCTUnwrap(post.body)) as! [String: Any]
+        let attrs = (json["data"] as! [String: Any])["attributes"] as! [String: Any]
+        XCTAssertEqual(attrs["identifier"] as? String, "com.seeyon.m3.appstore.new.phone")  // 标识符保留点
+        XCTAssertEqual(attrs["name"] as? String, "com seeyon m3 appstore new phone")        // name 已消毒
+        XCTAssertFalse((attrs["name"] as! String).contains("."), "发出的 App ID name 不能带点")
+    }
+
     func testCreateAdHocProfileSendsRelationshipsShape() async throws {
         let mock = MockHTTP { _, _ in
             MockHTTP.json(201, ["data": ["id": "P", "attributes":
