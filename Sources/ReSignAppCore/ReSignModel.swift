@@ -169,15 +169,29 @@ public final class ReSignModel {
         let bundleID = try readBundleID(ipa)
         log.append("bundle id：\(bundleID)")
         log.append("确认 App ID…")
-        let bundle = try await client.findOrCreateBundleId(credentials: cred, identifier: bundleID, name: bundleID)
+        let appID = try await resolveBundleIdForAdHoc(cred: cred, bundleID: bundleID)
         log.append("获取账号下全部设备…")
         let devices = try await client.listDevices(credentials: cred)
         log.append("设备 \(devices.count) 台，刷新 Ad Hoc 描述文件…")
         let profile = try await client.refreshAdHocProfile(
-            credentials: cred, name: "ReSign AdHoc \(bundleID)",
-            bundleIdResourceId: bundle.id, certificateId: sid.ascCertificateId,
+            credentials: cred, name: appID.profileName,
+            bundleIdResourceId: appID.resourceId, certificateId: sid.ascCertificateId,
             deviceIds: devices.map { $0.id })
         return (bundleID, profile.contentData)
+    }
+
+    /// 优先建/用与 bundle id 匹配的**显式** App ID；被原开发者占用（Apple 409 "not available"）时
+    /// 回退到**通配** App ID（`*`）——通配 Ad Hoc 描述文件对任意 bundle id 都适用，是重签第三方 app 的通用做法。
+    private func resolveBundleIdForAdHoc(cred: ASCCredentials, bundleID: String)
+        async throws -> (resourceId: String, profileName: String) {
+        do {
+            let b = try await client.findOrCreateBundleId(credentials: cred, identifier: bundleID, name: bundleID)
+            return (b.id, "ReSign AdHoc \(bundleID)")
+        } catch ASCError.http(409, _) {
+            log.append("该 bundle id 已被原开发者占用，改用通配 App ID（*）")
+            let wild = try await client.findOrCreateBundleId(credentials: cred, identifier: "*", name: "ReSign Wildcard")
+            return (wild.id, "ReSign AdHoc Wildcard")
+        }
     }
 
     /// 导出「含当前全部设备」的 Ad Hoc 描述文件（.mobileprovision），供配 p12 在别处重签。

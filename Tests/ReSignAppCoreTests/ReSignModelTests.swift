@@ -217,4 +217,59 @@ final class ReSignModelTests: XCTestCase {
         XCTAssertNotNil(m.banner)
         XCTAssertFalse(FileManager.default.fileExists(atPath: out.path))
     }
+
+    /// 第三方 app 的 bundle id 被原开发者占用（显式 App ID 建返回 409 not available）→ 自动回退通配 '*'。
+    func testResignFallsBackToWildcardWhenAppIdNotAvailable() async throws {
+        final class Box: @unchecked Sendable {
+            private let lock = NSLock(); private var n = 0
+            func nextBundlePost() -> Int { lock.lock(); defer { lock.unlock() }; n += 1; return n }
+        }
+        let box = Box()
+        let profileData = Data([0xEE, 0xFF])
+        let mock = MockHTTP { method, path in
+            if path.hasSuffix("v1/bundleIds") {
+                if method == "GET" { return MockHTTP.json(200, ["data": []]) }   // 显式/通配 GET 都空
+                // 第 1 个 POST（显式）→ 409 not available；第 2 个 POST（通配）→ 201
+                return box.nextBundlePost() == 1
+                    ? MockHTTP.json(409, ["errors": [["detail": "An App ID with Identifier 'com.demo.app' is not available. Please enter a different string."]]])
+                    : MockHTTP.json(201, ["data": ["id": "WILD", "attributes": ["identifier": "*", "name": "ReSign Wildcard"]]])
+            }
+            if path.hasSuffix("v1/devices") {
+                return MockHTTP.json(200, ["data": [["id": "D1", "attributes": ["udid": "u1", "name": "d1", "status": "ENABLED"]]]])
+            }
+            if path.hasSuffix("v1/profiles") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "P", "attributes": ["profileContent": profileData.base64EncodedString()]]])
+            }
+            return MockHTTP.json(200, ["data": []])
+        }
+        let c = ASCClient(http: mock, signJWT: { _ in "T" })
+        let (m, idStore) = try makeModel(client: c)
+        let acc = AppleAccount(displayName: "A", keyID: "K", issuerID: "I")
+        try m.store.add(acc); try m.secrets.save("PEM", for: acc.id); m.reload(); m.selectedID = acc.id
+        try idStore.save(SigningIdentity(privateKeyDER: Data([1]), certificateDER: Data([2]), ascCertificateId: "C"), for: acc.id)
+        m.readBundleID = { _ in "com.demo.app" }
+        var captured: Data?
+        m.performResign = { _, _, _, mp in captured = mp }
+        m.revealInFinder = { _ in }
+        m.selectedIPA = URL(fileURLWithPath: "/tmp/demo.ipa")
+
+        await m.resign()
+
+        XCTAssertNil(m.banner, "应回退到通配、不报错：\(m.banner ?? "")")
+        XCTAssertEqual(captured, profileData)
+        // 先显式后通配：两次 bundleIds POST
+        let bundlePosts = mock.requests.filter { $0.method == "POST" && $0.url.path.hasSuffix("v1/bundleIds") }
+        XCTAssertEqual(bundlePosts.count, 2)
+        // 第 2 次 POST 的 identifier 是通配 '*'
+        let secondJSON = try JSONSerialization.jsonObject(with: try XCTUnwrap(bundlePosts.last?.body)) as! [String: Any]
+        let secondAttrs = (secondJSON["data"] as! [String: Any])["attributes"] as! [String: Any]
+        XCTAssertEqual(secondAttrs["identifier"] as? String, "*")
+        // profile 引用的是通配 bundle 资源 WILD
+        let profPost = mock.requests.last { $0.method == "POST" && $0.url.path.hasSuffix("v1/profiles") }
+        let pJSON = try JSONSerialization.jsonObject(with: try XCTUnwrap(profPost?.body)) as! [String: Any]
+        let rel = ((pJSON["data"] as! [String: Any])["relationships"]) as! [String: Any]
+        let bundleRel = (rel["bundleId"] as! [String: Any])["data"] as! [String: Any]
+        XCTAssertEqual(bundleRel["id"] as? String, "WILD")
+    }
 }
