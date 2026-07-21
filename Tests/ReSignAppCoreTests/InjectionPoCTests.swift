@@ -74,6 +74,19 @@ final class InjectionPoCTests: XCTestCase {
         try Subprocess.runChecked("/usr/bin/ditto", ["-x", "-k", ipa.path, work.path])
         guard let app = IPAResigner.findPayloadApp(in: work) else { throw XCTSkip("IPA 内无 Payload/*.app") }
 
+        // 2.5) **PoC 专用**（POC_STRIP_PLUGINS=1）：删掉 App 扩展/Watch/AppClip，让当前引擎（拒签嵌套
+        //      可执行 bundle）能先验证「注入+ElleKit+通配签名+装机」这条核心链路。**绝非引擎行为**——
+        //      真实产品需扩展引擎用通配 profile 覆盖主 app + 所有 appex（见 handoff 里的扩展签名待办）。
+        if env["POC_STRIP_PLUGINS"] == "1" {
+            for sub in ["PlugIns", "Watch", "AppClips"] {
+                let d = app.appendingPathComponent(sub)
+                if FileManager.default.fileExists(atPath: d.path) {
+                    try FileManager.default.removeItem(at: d)
+                    print("== [PoC-strip] 已删除 \(sub)/（仅 PoC，验证注入链路用）")
+                }
+            }
+        }
+
         // 3) 签名健壮性：清 quarantine 等扩展属性（handoff：M3 曾有 1550 文件带 quarantine xattr）
         _ = try? Subprocess.run("/usr/bin/xattr", ["-cr", app.path])
 
