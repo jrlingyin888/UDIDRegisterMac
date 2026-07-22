@@ -23,12 +23,6 @@ import UDIDRegisterKit
 /// 确认插件 hook 生效（如 FakeGPS 真改了定位）→ 记录 `.superpowers/sdd/injection-poc-result.md`。
 final class InjectionPoCTests: XCTestCase {
 
-    /// 仓库内自带的注入工具（Task 1 已提交）。运行 `swift test` 时 CWD = 包根。
-    private func bundledInjectTool(_ name: String) -> URL {
-        URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Resources/inject/\(name)")
-    }
-
     /// 登录钥匙串里证书总数（best-effort；用于「无净增泄漏」软断言）。解析失败返回 -1。
     private func loginCertCount() -> Int {
         guard let login = try? Subprocess.runChecked("/usr/bin/security", ["login-keychain"]) else { return -1 }
@@ -49,10 +43,8 @@ final class InjectionPoCTests: XCTestCase {
         let plugin = URL(fileURLWithPath: (pluginPath as NSString).expandingTildeInPath)
         guard FileManager.default.fileExists(atPath: ipa.path) else { throw XCTSkip("POC_IPA 不存在: \(ipa.path)") }
         guard FileManager.default.fileExists(atPath: plugin.path) else { throw XCTSkip("POC_PLUGIN 不存在: \(plugin.path)") }
-        let insertTool = bundledInjectTool("insert_dylib")
-        let ellekit = bundledInjectTool("ElleKit.dylib")
-        guard FileManager.default.isExecutableFile(atPath: insertTool.path) else { throw XCTSkip("缺自带 insert_dylib（Task 1）") }
-        guard FileManager.default.fileExists(atPath: ellekit.path) else { throw XCTSkip("缺自带 ElleKit.dylib（Task 1）") }
+        let insertTool = try BundledInjectTools.insertDylib
+        let ellekit = try BundledInjectTools.ellekit
 
         // 1) 真实账号 → 通配描述文件 + 签名身份（与 LIVE_RESIGN 同源）
         let store = AccountStore(fileURL: ReSignModel.liveAccountsFileURL())

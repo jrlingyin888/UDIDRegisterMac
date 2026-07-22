@@ -19,6 +19,12 @@ rm -rf "$DIST/$APP"; mkdir -p "$DIST/$APP/Contents/MacOS" "$DIST/$APP/Contents/R
 cp ".build/release/$BIN" "$DIST/$APP/Contents/MacOS/$BIN"
 cp Resources/ReSignAppIcon.icns "$DIST/$APP/Contents/Resources/ReSignAppIcon.icns"
 
+# 内置注入工具随 app 附带；为过公证，Mach-O 需各自 hardened-runtime + 时间戳签名
+[ -f Resources/inject/insert_dylib ] && [ -f Resources/inject/ElleKit.dylib ] || { echo "❌ 缺 Resources/inject 内置工具"; exit 1; }
+cp -R Resources/inject "$DIST/$APP/Contents/Resources/inject"
+codesign --force --options runtime --timestamp --sign "$DEV_ID_APP" "$DIST/$APP/Contents/Resources/inject/insert_dylib"
+codesign --force --options runtime --timestamp --sign "$DEV_ID_APP" "$DIST/$APP/Contents/Resources/inject/ElleKit.dylib"
+
 cp Resources/ReSignApp-Info.plist "$DIST/$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$DIST/$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $BIN" "$DIST/$APP/Contents/Info.plist"
