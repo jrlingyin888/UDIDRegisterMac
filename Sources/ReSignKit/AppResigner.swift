@@ -5,6 +5,16 @@ public struct AppResigner {
                               profileData: Data, entitlements: [String: Any]) throws {
         let bundle = AppBundle(appDir: appDir)
 
+        // 先检查后动作：AppClips/*.app 目前不在支持范围（codeToSignInsideOut 不会遍历它，签了会漏签 →
+        // 混签的 IPA 装不上）。故在写任何描述文件/签任何 bundle 之前，先对含 App Clip 的 app 拒签（安全的
+        // 显式失败），而不是静默漏签。appex/Watch 仍照常签，不在此拦。
+        let appClips = ((try? FileManager.default.contentsOfDirectory(
+            at: appDir.appendingPathComponent("AppClips"), includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "app" }
+        guard appClips.isEmpty else {
+            throw ReSignError.unsupportedNestedBundle(appClips.map { $0.lastPathComponent })
+        }
+
         // entitlements 落临时 plist（所有可执行 bundle 共用同一份通配 entitlements）
         let entURL = FileManager.default.temporaryDirectory.appendingPathComponent("entitlements-\(UUID().uuidString).plist")
         let entData = try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0)

@@ -81,6 +81,46 @@ final class AppResignerTests: XCTestCase {
         XCTAssertTrue(d.stdout.contains("TEAMID"), "扩展应带上 entitlements：\(d.stdout)")
     }
 
+    /// C1：含 AppClips/*.app 的 app 目前仍不支持——codeToSignInsideOut 不会遍历 App Clip，
+    /// 签了会漏签导致混签 IPA 装不上，故对含 App Clip 的 app 拒签（安全的显式失败），而不是静默漏签。
+    /// 且必须“先检查后动作”：拒签前不得往主 app 写 embedded.mobileprovision。
+    func testResignRefusesAppWithAppClip() throws {
+        for tool in ["/usr/bin/codesign", "/usr/bin/openssl", "/usr/bin/security"] {
+            guard FileManager.default.isExecutableFile(atPath: tool) else { throw XCTSkip("no \(tool)") }
+        }
+        let tmp = try TestTemp.dir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        let app = tmp.appendingPathComponent("Demo.app")
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        try (["CFBundleIdentifier": "com.demo.app", "CFBundleExecutable": "Demo"] as NSDictionary)
+            .write(to: app.appendingPathComponent("Info.plist"))
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/echo"),
+                                         to: app.appendingPathComponent("Demo"))
+        // 合成 App Clip：AppClips/Clip.app（用真实 mach-o /bin/echo 作可执行）
+        let clip = app.appendingPathComponent("AppClips").appendingPathComponent("Clip.app")
+        try FileManager.default.createDirectory(at: clip, withIntermediateDirectories: true)
+        try (["CFBundleIdentifier": "com.demo.app.Clip", "CFBundleExecutable": "Clip"] as NSDictionary)
+            .write(to: clip.appendingPathComponent("Info.plist"))
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/echo"),
+                                         to: clip.appendingPathComponent("Clip"))
+
+        let fx = try TestSigningFixture.make(in: tmp); defer { fx.cleanup() }
+        let id = try TemporaryKeychainIdentity(privateKey: fx.privateKey,
+                                               certificateDER: fx.certificateDER, commonName: fx.commonName)
+        defer { id.cleanup() }
+
+        let ent: [String: Any] = ["application-identifier": "TEAMID.*", "get-task-allow": false]
+        XCTAssertThrowsError(try AppResigner.resign(appDir: app, identity: id,
+                                                    profileData: Data("FAKE-PROFILE".utf8), entitlements: ent)) { error in
+            guard case ReSignError.unsupportedNestedBundle(let names) = error else {
+                return XCTFail("应抛出 unsupportedNestedBundle，实际：\(error)")
+            }
+            XCTAssertEqual(names, ["Clip.app"])
+        }
+        // 先检查后动作：拒签前没往主 app 写描述文件
+        XCTAssertFalse(FileManager.default.fileExists(atPath: app.appendingPathComponent("embedded.mobileprovision").path),
+                       "拒签前不应写入 embedded.mobileprovision")
+    }
+
     /// I1：profile-first 入口应从描述文件里派生 entitlements，而不是要求调用方另外传一份
     /// （避免越权：签上去的 entitlements 应与描述文件保持一致）。
     func testResignMobileprovisionDataDerivesEntitlementsFromProfile() throws {
