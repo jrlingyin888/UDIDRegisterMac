@@ -55,12 +55,11 @@
 
 ### 3. 内置工具打包 + 运行时定位（`BundledInjectTools`）
 
-现状：`insert_dylib` + `ElleKit.dylib` 在仓库 `Resources/inject/`，测试靠 CWD。产品需装好后运行时可定位。
+现状：`insert_dylib` + `ElleKit.dylib` 在仓库 `Resources/inject/`，测试靠 CWD。产品需装好后运行时可定位。**保持文件在仓库 `Resources/inject/` 原地不动**（不迁移，避免动已评审的 `DylibInjectorTests`），用一个**双路径解析器**在打包后与 dev/测试两种环境都能定位：
 
-- 把两件作为 **SwiftPM 资源**归 `ReSignAppCore` 目标（`.copy`），运行时经 `Bundle.module` 定位。新增 `BundledInjectTools`（`ReSignAppCore`）：`static var insertDylib: URL`、`static var ellekit: URL`，从 `Bundle.module` 解析；缺失则抛中文错误。
-- 资源实际存放：`Sources/ReSignAppCore/Resources/inject/{insert_dylib,ElleKit.dylib}`（从仓库 `Resources/inject/` 迁入；保留 `README` 来源说明）。`Package.swift` 的 `ReSignAppCore` 加 `resources: [.copy("Resources/inject")]`。
-- `scripts/package-resign.sh`：把 `swift build` 生成的 `ReSignAppCore_ReSignAppCore.bundle` 资源 bundle 拷进 `.app/Contents/Resources/`，使 `Bundle.module` 运行时可用。
-- 受影响测试改定位：`InjectionPoCTests`（`ReSignAppCoreTests`）改用 `BundledInjectTools`；`DylibInjectorTests`（`ReSignKitTests`）改用迁移后的路径 `Sources/ReSignAppCore/Resources/inject/insert_dylib`（仍 CWD 相对，`ReSignKit` 层不引 `Bundle.module`）。
+- 新增 `BundledInjectTools`（`ReSignAppCore`）：`static var insertDylib: URL { get throws }`、`static var ellekit: URL { get throws }`，按序解析——① 打包后的 app：`Bundle.main.resourceURL/inject/<name>`（存在即用）；② dev/测试：`<CWD>/Resources/inject/<name>`（`swift test`/`swift run` 时 CWD=包根）；都找不到 → 抛中文错误「找不到内置注入工具…（打包时未随 app 附带）」。
+- `scripts/package-resign.sh`：加 `cp -R Resources/inject "$DIST/$APP/Contents/Resources/inject"`，使 `Bundle.main.resourceURL/inject/*` 在装好的 app 内可用。
+- 受影响测试改定位：`InjectionPoCTests`（`ReSignAppCoreTests`）改用 `BundledInjectTools.insertDylib/ellekit`（走上面的解析）。`DylibInjectorTests`（`ReSignKitTests`，ReSignKit 层够不到 ReSignAppCore 的 `BundledInjectTools`）**保持不变**，继续用 `Resources/inject/insert_dylib`（CWD 相对，文件未迁移）。
 
 ## 测试
 
