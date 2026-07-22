@@ -145,7 +145,16 @@ public final class ReSignModel {
             let mobileprovisionData = built.profileData
             try await Task.detached {
                 let toSign = try plugin.map { try inject(ipa, $0) } ?? ipa
-                defer { if plugin != nil { try? FileManager.default.removeItem(at: toSign.deletingLastPathComponent()) } }
+                defer {
+                    if plugin != nil {
+                        let parent = toSign.deletingLastPathComponent()
+                        let tempRoot = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
+                        // 仅删我们自己的临时注入目录（系统临时目录下）；绝不误删用户源目录
+                        if parent.resolvingSymlinksInPath().path.hasPrefix(tempRoot) {
+                            try? FileManager.default.removeItem(at: parent)
+                        }
+                    }
+                }
                 try work(toSign, output, sid, mobileprovisionData)
             }.value
             log.append("✅ 完成：\(output.lastPathComponent)")

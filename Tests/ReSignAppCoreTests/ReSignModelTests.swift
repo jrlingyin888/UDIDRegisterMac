@@ -420,4 +420,50 @@ final class ReSignModelTests: XCTestCase {
                       "banner 应为中文，实际：\(m.banner ?? "")")
         XCTAssertFalse(resignCalled, "注入失败不应继续签名")
     }
+
+    /// 清理守卫：performInjection 返回的产物父目录若不在系统临时目录下，resign() 绝不删除它（防误删用户源目录）
+    func testResignCleanupSparesNonTempInjectionDir() async throws {
+        let profileData = Data([0xAB])
+        let mock = MockHTTP { method, path in
+            if path.hasSuffix("v1/bundleIds") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "B1", "attributes": ["identifier": "com.demo.app", "name": "com.demo.app"]]])
+            }
+            if path.hasSuffix("v1/devices") { return MockHTTP.json(200, ["data": [["id": "D1", "attributes": ["udid": "u1", "name": "d1", "status": "ENABLED"]]]]) }
+            if path.hasSuffix("v1/profiles") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "P1", "attributes": ["name": "n", "profileContent": profileData.base64EncodedString()]]])
+            }
+            return MockHTTP.json(200, ["data": []])
+        }
+        let (m, idStore) = try makeModel(client: ASCClient(http: mock, signJWT: { _ in "T" }))
+        let acc = AppleAccount(displayName: "A", keyID: "K", issuerID: "I")
+        try m.store.add(acc); try m.secrets.save("PEM", for: acc.id); m.reload(); m.selectedID = acc.id
+        try idStore.save(SigningIdentity(privateKeyDER: Data([1]), certificateDER: Data([2]), ascCertificateId: "CERT1"), for: acc.id)
+        m.readBundleID = { _ in "com.demo.app" }
+        m.revealInFinder = { _ in }
+        m.selectedIPA = URL(fileURLWithPath: "/tmp/demo.ipa")
+        m.selectedPlugin = URL(fileURLWithPath: "/tmp/FakeGPS.dylib")
+
+        // 非临时目录：包根下的 .test-guard-<uuid>（其解析路径不以系统临时目录为前缀）
+        let guardDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".test-guard-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: guardDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: guardDir) }
+        let sentinel = guardDir.appendingPathComponent("sentinel.txt")
+        try Data("keep".utf8).write(to: sentinel)
+        // 兜底断言：该目录确非系统临时目录下（否则本测试无法证明守卫）
+        let tempRoot = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
+        XCTAssertFalse(guardDir.resolvingSymlinksInPath().path.hasPrefix(tempRoot),
+                       "guardDir 不应在系统临时目录下，否则测不到守卫的负分支：\(guardDir.path)")
+
+        m.performInjection = { _, _ in guardDir.appendingPathComponent("injected.ipa") }
+        m.performResign = { _, _, _, _ in }   // no-op；产物文件不必真实存在
+
+        await m.resign()
+
+        XCTAssertNil(m.banner, "不应有错误：\(m.banner ?? "")")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sentinel.path),
+                      "守卫应阻止删除非临时目录，sentinel 应仍在")
+    }
 }
