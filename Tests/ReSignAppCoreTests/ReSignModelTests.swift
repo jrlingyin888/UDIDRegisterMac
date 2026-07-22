@@ -384,4 +384,40 @@ final class ReSignModelTests: XCTestCase {
         XCTAssertFalse(injectCalled, "未选插件不应调用注入")
         XCTAssertEqual(signedInput, URL(fileURLWithPath: "/tmp/demo.ipa"), "未选插件应直接签原 IPA")
     }
+
+    /// 注入失败（如仍加密 IPA）→ 中文 banner，且不进入签名（InjectError 已本地化为中文）
+    func testInjectionFailureShowsChineseBannerAndSkipsResign() async throws {
+        let profileData = Data([0xAB])
+        let mock = MockHTTP { method, path in
+            if path.hasSuffix("v1/bundleIds") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "B1", "attributes": ["identifier": "com.demo.app", "name": "com.demo.app"]]])
+            }
+            if path.hasSuffix("v1/devices") { return MockHTTP.json(200, ["data": [["id": "D1", "attributes": ["udid": "u1", "name": "d1", "status": "ENABLED"]]]]) }
+            if path.hasSuffix("v1/profiles") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "P1", "attributes": ["name": "n", "profileContent": profileData.base64EncodedString()]]])
+            }
+            return MockHTTP.json(200, ["data": []])
+        }
+        let (m, idStore) = try makeModel(client: ASCClient(http: mock, signJWT: { _ in "T" }))
+        let acc = AppleAccount(displayName: "A", keyID: "K", issuerID: "I")
+        try m.store.add(acc); try m.secrets.save("PEM", for: acc.id); m.reload(); m.selectedID = acc.id
+        try idStore.save(SigningIdentity(privateKeyDER: Data([1]), certificateDER: Data([2]), ascCertificateId: "CERT1"), for: acc.id)
+        m.readBundleID = { _ in "com.demo.app" }
+        m.revealInFinder = { _ in }
+        m.selectedIPA = URL(fileURLWithPath: "/tmp/demo.ipa")
+        m.selectedPlugin = URL(fileURLWithPath: "/tmp/FakeGPS.dylib")
+
+        m.performInjection = { _, _ in throw InjectError.encrypted }
+        var resignCalled = false
+        m.performResign = { _, _, _, _ in resignCalled = true }
+
+        await m.resign()
+
+        XCTAssertNotNil(m.banner, "注入失败应有 banner")
+        XCTAssertTrue(m.banner?.contains("加密") == true || m.banner?.contains("脱壳") == true,
+                      "banner 应为中文，实际：\(m.banner ?? "")")
+        XCTAssertFalse(resignCalled, "注入失败不应继续签名")
+    }
 }

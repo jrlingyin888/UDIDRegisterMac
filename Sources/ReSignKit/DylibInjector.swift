@@ -2,8 +2,18 @@ import Foundation
 
 public struct InjectableApp { public let appDir: URL; public let mainExecutable: URL }
 
-public enum InjectError: Error, Equatable {
+public enum InjectError: Error, Equatable, LocalizedError {
     case notApp, encrypted, badArch(String), notMachO(String), insertFailed(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notApp: return "IPA 结构异常：找不到 app 或其主程序"
+        case .encrypted: return "该 IPA 仍加密（cryptid≠0），请先脱壳后再注入"
+        case let .badArch(a): return "架构不支持（需 arm64）：\(a)"
+        case let .notMachO(n): return "主程序不是 Mach-O：\(n)"
+        case let .insertFailed(m): return "注入失败：\(m)"
+        }
+    }
 }
 
 public struct DylibInjector {

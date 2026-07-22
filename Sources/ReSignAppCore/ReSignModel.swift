@@ -25,6 +25,8 @@ public final class ReSignModel {
     public var readBundleID: (URL) throws -> String = { try IPAResigner.readBundleIdentifier(ipaURL: $0) }
     public var performResign: (_ ipaURL: URL, _ outputURL: URL, _ identity: SigningIdentity, _ mobileprovisionData: Data) throws -> Void
         = ReSignModel.defaultPerformResign
+    /// 注意：签名后会删除返回 URL 的父目录，故自定义实现必须返回一个「自己独占的全新临时目录内」的 URL
+    /// （切勿返回入参 `ipaURL`，也勿指向含其他文件的目录）。
     public var performInjection: (_ ipaURL: URL, _ plugin: URL) throws -> URL
         = ReSignModel.defaultPerformInjection
     public var revealInFinder: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
