@@ -20,10 +20,13 @@ public final class ReSignModel {
     public var busy = false
     public var banner: String?
     public var selectedIPA: URL?
+    public var selectedPlugin: URL?
 
     public var readBundleID: (URL) throws -> String = { try IPAResigner.readBundleIdentifier(ipaURL: $0) }
     public var performResign: (_ ipaURL: URL, _ outputURL: URL, _ identity: SigningIdentity, _ mobileprovisionData: Data) throws -> Void
         = ReSignModel.defaultPerformResign
+    public var performInjection: (_ ipaURL: URL, _ plugin: URL) throws -> URL
+        = ReSignModel.defaultPerformInjection
     public var revealInFinder: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
 
     let store: AccountStore
@@ -128,15 +131,20 @@ public final class ReSignModel {
         do {
             let cred = try credentials(for: a)
             let built = try await buildAdHocProfile(ipa: ipa, cred: cred, sid: sid)
-            let output = ReSignModel.resolveOutputURL(for: ipa)
+            let output = ReSignModel.resolveOutputURL(for: ipa, injected: selectedPlugin != nil)
             if output.deletingLastPathComponent() != ipa.deletingLastPathComponent() {
                 log.append("源目录只读，已改输出到下载文件夹")
             }
+            if let plugin = selectedPlugin { log.append("注入 \(plugin.lastPathComponent)…") }
             log.append("重签中…")
             let work = performResign
+            let inject = performInjection
+            let plugin = selectedPlugin
             let mobileprovisionData = built.profileData
             try await Task.detached {
-                try work(ipa, output, sid, mobileprovisionData)
+                let toSign = try plugin.map { try inject(ipa, $0) } ?? ipa
+                defer { if plugin != nil { try? FileManager.default.removeItem(at: toSign.deletingLastPathComponent()) } }
+                try work(toSign, output, sid, mobileprovisionData)
             }.value
             log.append("✅ 完成：\(output.lastPathComponent)")
             revealInFinder(output)
@@ -149,13 +157,14 @@ public final class ReSignModel {
     /// 产出 IPA 的落点：默认与源同目录 `<原名>-resigned.ipa`；源目录不可写（如挂载只读 DMG）时退回 ~/Downloads。
     public static func resolveOutputURL(
         for source: URL,
+        injected: Bool = false,
         isDirWritable: (String) -> Bool = { FileManager.default.isWritableFile(atPath: $0) },
         downloadsDir: () -> URL = {
             FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
                 ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
         }
     ) -> URL {
-        let name = source.deletingPathExtension().lastPathComponent + "-resigned.ipa"
+        let name = source.deletingPathExtension().lastPathComponent + (injected ? "-injected.ipa" : "-resigned.ipa")
         let srcDir = source.deletingLastPathComponent()
         if isDirWritable(srcDir.path) { return srcDir.appendingPathComponent(name) }
         return downloadsDir().appendingPathComponent(name)
@@ -225,5 +234,28 @@ public final class ReSignModel {
         defer { tki.cleanup() }
         try tki.addToSearchListForCodesign()
         try IPAResigner.resign(ipaURL: ipaURL, outputURL: outputURL, identity: tki, mobileprovisionData: mobileprovisionData)
+    }
+
+    /// 默认注入：解包 IPA → 定位 app → xattr -cr → preflight（已解密/arm64）→ inject（内置 insert_dylib + ElleKit）
+    /// → 重打包为临时 IPA，返回其 URL。失败时清掉自己的临时目录。
+    public static func defaultPerformInjection(ipaURL: URL, plugin: URL) throws -> URL {
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("inject-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        do {
+            try Subprocess.runChecked("/usr/bin/ditto", ["-x", "-k", ipaURL.path, work.path])
+            guard let app = IPAResigner.findPayloadApp(in: work) else { throw ReSignAppError.msg("IPA 内找不到 Payload/*.app") }
+            _ = try? Subprocess.run("/usr/bin/xattr", ["-cr", app.path])
+            let target = try DylibInjector.preflight(appDir: app)
+            try DylibInjector.inject(plugin: plugin, into: target,
+                                     insertDylibTool: try BundledInjectTools.insertDylib,
+                                     substrateReplacement: try BundledInjectTools.ellekit)
+            let injectedIPA = work.appendingPathComponent("injected.ipa")
+            try Subprocess.runChecked("/usr/bin/ditto",
+                ["-c", "-k", "--sequesterRsrc", "--keepParent", work.appendingPathComponent("Payload").path, injectedIPA.path])
+            return injectedIPA
+        } catch {
+            try? FileManager.default.removeItem(at: work)
+            throw error
+        }
     }
 }

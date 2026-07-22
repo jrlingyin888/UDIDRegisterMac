@@ -272,4 +272,116 @@ final class ReSignModelTests: XCTestCase {
         let bundleRel = (rel["bundleId"] as! [String: Any])["data"] as! [String: Any]
         XCTAssertEqual(bundleRel["id"] as? String, "WILD")
     }
+
+    /// 选了插件 → resign() 先调 performInjection，把其产物（而非原 IPA）交给 performResign；输出名 -injected.ipa
+    func testResignInjectsWhenPluginSelectedAndNamesInjected() async throws {
+        let profileData = Data([0xAB])
+        let mock = MockHTTP { method, path in
+            if path.hasSuffix("v1/bundleIds") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "B1", "attributes": ["identifier": "com.demo.app", "name": "com.demo.app"]]])
+            }
+            if path.hasSuffix("v1/devices") { return MockHTTP.json(200, ["data": [["id": "D1", "attributes": ["udid": "u1", "name": "d1", "status": "ENABLED"]]]]) }
+            if path.hasSuffix("v1/profiles") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "P1", "attributes": ["name": "n", "profileContent": profileData.base64EncodedString()]]])
+            }
+            return MockHTTP.json(200, ["data": []])
+        }
+        let (m, idStore) = try makeModel(client: ASCClient(http: mock, signJWT: { _ in "T" }))
+        let acc = AppleAccount(displayName: "A", keyID: "K", issuerID: "I")
+        try m.store.add(acc); try m.secrets.save("PEM", for: acc.id); m.reload(); m.selectedID = acc.id
+        try idStore.save(SigningIdentity(privateKeyDER: Data([1]), certificateDER: Data([2]), ascCertificateId: "CERT1"), for: acc.id)
+        m.readBundleID = { _ in "com.demo.app" }
+        m.revealInFinder = { _ in }
+        m.selectedIPA = URL(fileURLWithPath: "/tmp/demo.ipa")
+        m.selectedPlugin = URL(fileURLWithPath: "/tmp/FakeGPS.dylib")
+
+        let sentinel = URL(fileURLWithPath: "/tmp/inject-xyz/injected.ipa")
+        var injectInput: (URL, URL)?
+        m.performInjection = { ipa, plugin in injectInput = (ipa, plugin); return sentinel }
+        var signedInput: URL?
+        m.performResign = { ipa, out, _, _ in signedInput = ipa; _ = out }
+
+        await m.resign()
+
+        XCTAssertNil(m.banner, "不应有错误：\(m.banner ?? "")")
+        XCTAssertEqual(injectInput?.0, URL(fileURLWithPath: "/tmp/demo.ipa"))
+        XCTAssertEqual(injectInput?.1, URL(fileURLWithPath: "/tmp/FakeGPS.dylib"))
+        XCTAssertEqual(signedInput, sentinel, "选了插件应把注入产物交给签名")
+        // 输出命名 -injected.ipa（源目录 /tmp 可写）
+        XCTAssertEqual(ReSignModel.resolveOutputURL(for: m.selectedIPA!, injected: true),
+                       URL(fileURLWithPath: "/tmp/demo-injected.ipa"))
+    }
+
+    /// defaultPerformInjection 端到端：合成 arm64 app + 插件 → 产出的临时 IPA 内主程序含注入的 LC_LOAD_DYLIB
+    func testDefaultPerformInjectionEmbedsLoadCommand() throws {
+        for t in ["/usr/bin/clang", "/usr/bin/otool", "/usr/bin/ditto"] {
+            guard FileManager.default.isExecutableFile(atPath: t) else { throw XCTSkip("no \(t)") }
+        }
+        guard (try? BundledInjectTools.insertDylib) != nil else { throw XCTSkip("缺内置 insert_dylib") }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("pi-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // 合成最小 IPA：Payload/Demo.app（arm64 主程序）
+        let app = dir.appendingPathComponent("Payload/Demo.app")
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        let main = app.appendingPathComponent("Demo")
+        try Subprocess.runChecked("/usr/bin/clang", ["-arch", "arm64", "-o", main.path, "-x", "c", "-"],
+            input: Data("int main(){return 0;}".utf8))
+        try (["CFBundleIdentifier": "com.demo.app", "CFBundleExecutable": "Demo"] as NSDictionary)
+            .write(to: app.appendingPathComponent("Info.plist"))
+        let ipa = dir.appendingPathComponent("demo.ipa")
+        try Subprocess.runChecked("/usr/bin/ditto",
+            ["-c", "-k", "--sequesterRsrc", "--keepParent", dir.appendingPathComponent("Payload").path, ipa.path])
+        // 合成插件 dylib
+        let plugin = dir.appendingPathComponent("Plug.dylib")
+        try Subprocess.runChecked("/usr/bin/clang", ["-arch", "arm64", "-dynamiclib", "-o", plugin.path, "-x", "c", "-"],
+            input: Data("int plug(){return 1;}".utf8))
+
+        let injected = try ReSignModel.defaultPerformInjection(ipaURL: ipa, plugin: plugin)
+        defer { try? FileManager.default.removeItem(at: injected.deletingLastPathComponent()) }
+        // 解包产物 → 主程序依赖应含注入的 dylib
+        let out = dir.appendingPathComponent("out")
+        try Subprocess.runChecked("/usr/bin/ditto", ["-x", "-k", injected.path, out.path])
+        let outApp = try XCTUnwrap(IPAResigner.findPayloadApp(in: out))
+        let deps = try MachOInspect.dylibDependencies(outApp.appendingPathComponent("Demo"))
+        XCTAssertTrue(deps.contains { $0.contains("Plug.dylib") }, "主程序应加载注入的 dylib，实际：\(deps)")
+    }
+
+    /// 未选插件 → performInjection 不被调用，performResign 收到的是原 IPA（回归保护）
+    func testResignSkipsInjectionWhenNoPlugin() async throws {
+        let profileData = Data([0xAB])
+        let mock = MockHTTP { method, path in
+            if path.hasSuffix("v1/bundleIds") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "B1", "attributes": ["identifier": "com.demo.app", "name": "com.demo.app"]]])
+            }
+            if path.hasSuffix("v1/devices") { return MockHTTP.json(200, ["data": [["id": "D1", "attributes": ["udid": "u1", "name": "d1", "status": "ENABLED"]]]]) }
+            if path.hasSuffix("v1/profiles") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "P1", "attributes": ["name": "n", "profileContent": profileData.base64EncodedString()]]])
+            }
+            return MockHTTP.json(200, ["data": []])
+        }
+        let (m, idStore) = try makeModel(client: ASCClient(http: mock, signJWT: { _ in "T" }))
+        let acc = AppleAccount(displayName: "A", keyID: "K", issuerID: "I")
+        try m.store.add(acc); try m.secrets.save("PEM", for: acc.id); m.reload(); m.selectedID = acc.id
+        try idStore.save(SigningIdentity(privateKeyDER: Data([1]), certificateDER: Data([2]), ascCertificateId: "CERT1"), for: acc.id)
+        m.readBundleID = { _ in "com.demo.app" }
+        m.revealInFinder = { _ in }
+        m.selectedIPA = URL(fileURLWithPath: "/tmp/demo.ipa")
+        m.selectedPlugin = nil
+
+        var injectCalled = false
+        m.performInjection = { _, _ in injectCalled = true; return URL(fileURLWithPath: "/tmp/none") }
+        var signedInput: URL?
+        m.performResign = { ipa, _, _, _ in signedInput = ipa }
+
+        await m.resign()
+
+        XCTAssertNil(m.banner, "不应有错误：\(m.banner ?? "")")
+        XCTAssertFalse(injectCalled, "未选插件不应调用注入")
+        XCTAssertEqual(signedInput, URL(fileURLWithPath: "/tmp/demo.ipa"), "未选插件应直接签原 IPA")
+    }
 }
