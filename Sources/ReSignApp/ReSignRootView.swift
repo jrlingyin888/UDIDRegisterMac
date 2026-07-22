@@ -22,6 +22,7 @@ struct ReSignRootView: View {
             identitySection
             Divider()
             ipaSection
+            pluginSection
             resignSection
             logSection
             if let banner = model.banner { Text(banner).font(.callout).foregroundStyle(.red) }
@@ -85,13 +86,37 @@ struct ReSignRootView: View {
         }
     }
 
+    @ViewBuilder private var pluginSection: some View {
+        @Bindable var model = model
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("插件（dylib，可选）").font(.subheadline)
+                Spacer()
+                if model.selectedPlugin != nil {
+                    Button("清除") { model.selectedPlugin = nil }
+                }
+                Button("选择插件…") { pickPlugin() }
+            }
+            RoundedRectangle(cornerRadius: 10).strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                .frame(height: 44).foregroundStyle(.secondary.opacity(0.5))
+                .overlay(Text(model.selectedPlugin?.lastPathComponent ?? "选一个 .dylib 注入（不选则只重签）")
+                    .foregroundStyle(.secondary))
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard let u = urls.first(where: { $0.pathExtension.lowercased() == "dylib" }) else { return false }
+                    model.selectedPlugin = u; return true
+                }
+        }
+    }
+
     @ViewBuilder private var resignSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Button {
                     Task { await model.resign() }
                 } label: {
-                    Label("一键重签", systemImage: "signature").frame(maxWidth: .infinity)
+                    Label(model.selectedPlugin == nil ? "一键重签" : "注入并重签",
+                          systemImage: model.selectedPlugin == nil ? "signature" : "syringe")
+                        .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large).buttonStyle(.borderedProminent)
                 .disabled(model.busy || model.selected == nil || model.selectedIPA == nil)
@@ -130,6 +155,13 @@ struct ReSignRootView: View {
         if let ipa = UTType(filenameExtension: "ipa") { panel.allowedContentTypes = [ipa] }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         model.selectedIPA = url
+    }
+    private func pickPlugin() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false; panel.canChooseDirectories = false
+        if let dylib = UTType(filenameExtension: "dylib") { panel.allowedContentTypes = [dylib] }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.selectedPlugin = url
     }
     private func pickP12ToImport() {
         let panel = NSOpenPanel()
