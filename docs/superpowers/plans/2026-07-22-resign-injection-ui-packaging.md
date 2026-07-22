@@ -207,6 +207,41 @@ git commit -m "feat(resignappcore): BundledInjectTools locate insert_dylib/ElleK
                        URL(fileURLWithPath: "/tmp/demo-injected.ipa"))
     }
 
+    /// defaultPerformInjection 端到端：合成 arm64 app + 插件 → 产出的临时 IPA 内主程序含注入的 LC_LOAD_DYLIB
+    func testDefaultPerformInjectionEmbedsLoadCommand() throws {
+        for t in ["/usr/bin/clang", "/usr/bin/otool", "/usr/bin/ditto"] {
+            guard FileManager.default.isExecutableFile(atPath: t) else { throw XCTSkip("no \(t)") }
+        }
+        guard (try? BundledInjectTools.insertDylib) != nil else { throw XCTSkip("缺内置 insert_dylib") }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("pi-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // 合成最小 IPA：Payload/Demo.app（arm64 主程序）
+        let app = dir.appendingPathComponent("Payload/Demo.app")
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        let main = app.appendingPathComponent("Demo")
+        try Subprocess.runChecked("/usr/bin/clang", ["-arch", "arm64", "-o", main.path, "-x", "c", "-"],
+            input: Data("int main(){return 0;}".utf8))
+        try (["CFBundleIdentifier": "com.demo.app", "CFBundleExecutable": "Demo"] as NSDictionary)
+            .write(to: app.appendingPathComponent("Info.plist"))
+        let ipa = dir.appendingPathComponent("demo.ipa")
+        try Subprocess.runChecked("/usr/bin/ditto",
+            ["-c", "-k", "--sequesterRsrc", "--keepParent", dir.appendingPathComponent("Payload").path, ipa.path])
+        // 合成插件 dylib
+        let plugin = dir.appendingPathComponent("Plug.dylib")
+        try Subprocess.runChecked("/usr/bin/clang", ["-arch", "arm64", "-dynamiclib", "-o", plugin.path, "-x", "c", "-"],
+            input: Data("int plug(){return 1;}".utf8))
+
+        let injected = try ReSignModel.defaultPerformInjection(ipaURL: ipa, plugin: plugin)
+        defer { try? FileManager.default.removeItem(at: injected.deletingLastPathComponent()) }
+        // 解包产物 → 主程序依赖应含注入的 dylib
+        let out = dir.appendingPathComponent("out")
+        try Subprocess.runChecked("/usr/bin/ditto", ["-x", "-k", injected.path, out.path])
+        let outApp = try XCTUnwrap(IPAResigner.findPayloadApp(in: out))
+        let deps = try MachOInspect.dylibDependencies(outApp.appendingPathComponent("Demo"))
+        XCTAssertTrue(deps.contains { $0.contains("Plug.dylib") }, "主程序应加载注入的 dylib，实际：\(deps)")
+    }
+
     /// 未选插件 → performInjection 不被调用，performResign 收到的是原 IPA（回归保护）
     func testResignSkipsInjectionWhenNoPlugin() async throws {
         let profileData = Data([0xAB])
@@ -328,7 +363,7 @@ Expected: 编译失败（`selectedPlugin` / `performInjection` / `resolveOutputU
 - [ ] **Step 6: 跑测试确认通过 + 全量回归**
 
 Run: `swift test --filter ReSignModelTests` 然后 `swift test`
-Expected: 两个新测试 + 现有 `testResignPipelineOrderAndDeviceIds`（未选插件路径，输出仍 `-resigned.ipa`）等全绿。
+Expected: 三个新测试（注入编排 + `defaultPerformInjection` 合成端到端 + 未选插件回归）+ 现有 `testResignPipelineOrderAndDeviceIds`（未选插件路径，输出仍 `-resigned.ipa`）等全绿。
 
 - [ ] **Step 7: 提交**
 
@@ -435,6 +470,7 @@ git commit -m "feat(resignapp): optional plugin (dylib) row in one-tap flow; but
 
 **Spec coverage：**
 - 模型注入接缝（`selectedPlugin` + `performInjection` + `defaultPerformInjection` + `resign()` 分支）→ Task 2 ✓
+- `defaultPerformInjection` 合成 arm64 端到端测试 → Task 2 Step 1 `testDefaultPerformInjectionEmbedsLoadCommand` ✓
 - 输出命名 `-injected.ipa`/未选不变 → Task 2（`resolveOutputURL(injected:)` + 测试）✓
 - 注入重活离主线程 → Task 2 `resign()`（`Task.detached` 内注入+签名）✓
 - UI 可选插件行 + 按钮文案 → Task 3 ✓
