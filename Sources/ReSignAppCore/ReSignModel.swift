@@ -190,6 +190,21 @@ public final class ReSignModel {
         log.append("bundle id：\(bundleID)")
         log.append("确认 App ID…")
         let appID = try await resolveBundleIdForAdHoc(cred: cred, bundleID: bundleID)
+        let data = try await refreshProfile(cred: cred, sid: sid, appID: appID)
+        return (bundleID, data)
+    }
+
+    /// 建「通配 App ID（*）+ 全部设备」的 Ad Hoc 描述文件——不依赖具体 IPA，对任意 bundle id 通用。
+    /// 供无 IPA 的导出使用（第三方 app 的显式 App ID 必被占用，导出的本就是这份通配）。
+    private func buildWildcardProfile(cred: ASCCredentials, sid: SigningIdentity) async throws -> Data {
+        log.append("确认通配 App ID（*）…")
+        let wild = try await client.findOrCreateBundleId(credentials: cred, identifier: "*", name: "ReSign Wildcard")
+        return try await refreshProfile(cred: cred, sid: sid, appID: (wild.id, "ReSign AdHoc Wildcard"))
+    }
+
+    /// 用给定 App ID（resourceId + profileName）+ 账号下**全部设备**刷 Ad Hoc 描述文件，返回描述文件字节。
+    private func refreshProfile(cred: ASCCredentials, sid: SigningIdentity,
+                               appID: (resourceId: String, profileName: String)) async throws -> Data {
         log.append("获取账号下全部设备…")
         let devices = try await client.listDevices(credentials: cred)
         log.append("设备 \(devices.count) 台，刷新 Ad Hoc 描述文件…")
@@ -197,7 +212,7 @@ public final class ReSignModel {
             credentials: cred, name: appID.profileName,
             bundleIdResourceId: appID.resourceId, certificateId: sid.ascCertificateId,
             deviceIds: devices.map { $0.id })
-        return (bundleID, profile.contentData)
+        return profile.contentData
     }
 
     /// 优先建/用与 bundle id 匹配的**显式** App ID；被原开发者占用（Apple 409 "not available"）时
@@ -215,19 +230,25 @@ public final class ReSignModel {
     }
 
     /// 导出「含当前全部设备」的 Ad Hoc 描述文件（.mobileprovision），供配 p12 在别处重签。
-    /// 按选中 IPA 的 bundle id 生成；是一次**快照**——之后再加设备需重新导出。
+    /// **选了 IPA** → 按其 bundle id 生成（显式优先、409 回退通配）；**没选 IPA** → 直接导出**通配**描述文件
+    /// （对任意 app 通用）。是一次**快照**——之后再加设备需重新导出。
     public func exportProfile(to url: URL) async -> Bool {
         banner = nil; log = []
         guard let a = selected else { banner = "请先选择账号"; return false }
-        guard let ipa = selectedIPA else { banner = "请先选择 IPA（描述文件按其 bundle id 生成）"; return false }
         guard let sid = (try? identity.identity(for: a.id)) ?? nil else {
             banner = "该账号还没有签名身份，请先「自动创建」或「导入 p12」"; return false
         }
         busy = true; defer { busy = false }
         do {
             let cred = try credentials(for: a)
-            let built = try await buildAdHocProfile(ipa: ipa, cred: cred, sid: sid)
-            try built.profileData.write(to: url, options: .atomic)
+            let profileData: Data
+            if let ipa = selectedIPA {
+                profileData = try await buildAdHocProfile(ipa: ipa, cred: cred, sid: sid).profileData
+            } else {
+                log.append("未选 IPA，导出通配描述文件（对任意 app 通用）")
+                profileData = try await buildWildcardProfile(cred: cred, sid: sid)
+            }
+            try profileData.write(to: url, options: .atomic)
             log.append("✅ 描述文件已导出：\(url.lastPathComponent)")
             return true
         } catch {

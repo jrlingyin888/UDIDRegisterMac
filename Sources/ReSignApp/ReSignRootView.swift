@@ -124,8 +124,8 @@ struct ReSignRootView: View {
             }
             HStack(spacing: 8) {
                 Button("导出描述文件…") { pickProfileToExport() }
-                    .disabled(model.busy || model.selected == nil || model.selectedIPA == nil || !identityReady)
-                Text("含当前全部设备，配 p12 可在别处重签（快照，加设备后需重导）")
+                    .disabled(model.busy || model.selected == nil || !identityReady)
+                Text("含当前全部设备，配 p12 可在别处重签（快照，加设备后需重导）；不选 IPA 则导出通配描述文件（对任意 app 通用）")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }

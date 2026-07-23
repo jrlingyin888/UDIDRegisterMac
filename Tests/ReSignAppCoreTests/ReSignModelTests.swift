@@ -204,18 +204,45 @@ final class ReSignModelTests: XCTestCase {
         XCTAssertEqual(Set(devs.compactMap { $0["id"] as? String }), ["D1", "D2"])
     }
 
-    func testExportProfileRefusesWithoutIPA() async throws {
-        let c = ASCClient(http: MockHTTP { _, _ in MockHTTP.json(200, ["data": []]) }, signJWT: { _ in "T" })
-        let (m, idStore) = try makeModel(client: c)
+    /// 未选 IPA → 直接导出**通配**描述文件（对任意 app 通用），不读 bundle id、不走显式 App ID。
+    func testExportProfileWithoutIPAExportsWildcard() async throws {
+        let profileData = Data([0xEE, 0xFF])
+        let mock = MockHTTP { method, path in
+            if path.hasSuffix("v1/bundleIds") {          // 无 IPA → 直奔通配 '*'
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "WILD", "attributes": ["identifier": "*", "name": "ReSign Wildcard"]]])
+            }
+            if path.hasSuffix("v1/devices") {
+                return MockHTTP.json(200, ["data": [["id": "D1", "attributes": ["udid": "u1", "name": "d1", "status": "ENABLED"]]]])
+            }
+            if path.hasSuffix("v1/profiles") {
+                return method == "GET" ? MockHTTP.json(200, ["data": []])
+                    : MockHTTP.json(201, ["data": ["id": "P1", "attributes": ["name": "n", "profileContent": profileData.base64EncodedString()]]])
+            }
+            return MockHTTP.json(200, ["data": []])
+        }
+        let (m, idStore) = try makeModel(client: ASCClient(http: mock, signJWT: { _ in "T" }))
         let acc = AppleAccount(displayName: "A", keyID: "K", issuerID: "I")
         try m.store.add(acc); try m.secrets.save("PEM", for: acc.id); m.reload(); m.selectedID = acc.id
-        try idStore.save(SigningIdentity(privateKeyDER: Data([1]), certificateDER: Data([2]), ascCertificateId: "C"), for: acc.id)
-        // 未选 IPA → 无法确定 bundle id → 拒绝、不落盘
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("nope-\(UUID().uuidString).mobileprovision")
+        try idStore.save(SigningIdentity(privateKeyDER: Data([1]), certificateDER: Data([2]), ascCertificateId: "CERT1"), for: acc.id)
+        m.selectedIPA = nil                              // 关键：没有 IPA
+        m.readBundleID = { _ in XCTFail("无 IPA 不应读取 bundle id"); return "x" }
+
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("wild-\(UUID().uuidString).mobileprovision")
+        defer { try? FileManager.default.removeItem(at: out) }
+
         let ok = await m.exportProfile(to: out)
-        XCTAssertFalse(ok)
-        XCTAssertNotNil(m.banner)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: out.path))
+
+        XCTAssertTrue(ok, "无 IPA 也应能导出通配描述文件：\(m.banner ?? "")")
+        XCTAssertNil(m.banner)
+        XCTAssertEqual(try Data(contentsOf: out), profileData)
+        // 通配描述文件仍带上账号下全部设备
+        let profilePost = mock.requests.last { $0.method == "POST" && $0.url.path.hasSuffix("v1/profiles") }
+        let body = try XCTUnwrap(profilePost?.body)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        let rel = ((json["data"] as! [String: Any])["relationships"]) as! [String: Any]
+        let devs = ((rel["devices"] as! [String: Any])["data"]) as! [[String: Any]]
+        XCTAssertEqual(Set(devs.compactMap { $0["id"] as? String }), ["D1"])
     }
 
     /// 第三方 app 的 bundle id 被原开发者占用（显式 App ID 建返回 409 not available）→ 自动回退通配 '*'。
